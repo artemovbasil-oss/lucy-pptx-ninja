@@ -1,9 +1,10 @@
 {
   "name": "Lucy — PPTX ninja",
-  "id": "com.lucy.pptx.ninja",
+  "id": "1591432663563592149",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",
   "editorType": ["figma"],
-  "networkAccess": { "allowedDomains": ["none"] }
+  "networkAccess": { "allowedDomains": ["none"] },
+  "documentAccess": "dynamic-page"
 }

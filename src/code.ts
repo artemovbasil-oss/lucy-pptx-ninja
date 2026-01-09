@@ -1,5 +1,5 @@
-// src/code.ts
-figma.showUI(__html__, { width: 320, height: 300 });
+// src/code.ts (v0.3.4)
+figma.showUI(__html__, { width: 320, height: 320 });
 
 function postStatus(text: string) {
   figma.ui.postMessage({ type: "STATUS", text });
@@ -35,33 +35,51 @@ function rectRelativeToFrame(node: SceneNode, frame: FrameNode) {
 }
 
 type ExportText = {
+  kind: "text";
+  z: number;
   id: string;
   x: number; y: number; w: number; h: number;
   text: string;
   fontFamily: string;
-  fontSize: number;
+  fontSize: number; // px from Figma
   color: string;
   align: "left" | "center" | "right" | "justify";
   opacity: number;
+  bold: boolean;
+  italic: boolean;
 };
 
 type ExportShape =
   | {
+      kind: "shape";
+      z: number;
       id: string;
-      kind: "rect" | "ellipse";
+      shape: "rect" | "ellipse";
       x: number; y: number; w: number; h: number;
       fill: string | null;
       stroke: { color: string; width: number } | null;
-      radius: number; // for rect
+      radius: number;
       opacity: number;
     }
   | {
+      kind: "shape";
+      z: number;
       id: string;
-      kind: "line";
+      shape: "line";
       x: number; y: number; w: number; h: number;
       stroke: { color: string; width: number };
       opacity: number;
     };
+
+type ExportRaster = {
+  kind: "raster";
+  z: number;
+  id: string;
+  x: number; y: number; w: number; h: number;
+  pngBytes: number[];
+};
+
+type ExportItem = ExportText | ExportShape | ExportRaster;
 
 function alignMap(a: TextNode["textAlignHorizontal"]): ExportText["align"] {
   if (a === "CENTER") return "center";
@@ -104,41 +122,190 @@ function getFirstCharFillHex(tn: TextNode): string {
     return solid ? rgbToHex(solid.color) : "000000";
   }
 }
+function getFirstCharFontStyleFlags(tn: TextNode): { bold: boolean; italic: boolean } {
+  try {
+    const len = tn.characters?.length ?? 0;
+    if (len === 0) return { bold: false, italic: false };
+    const fn = tn.getRangeFontName(0, 1) as FontName;
+    const style = (fn?.style || "").toLowerCase();
+    return {
+      bold:
+        style.includes("bold") ||
+        style.includes("semibold") ||
+        style.includes("demibold") ||
+        style.includes("heavy") ||
+        style.includes("black"),
+      italic: style.includes("italic") || style.includes("oblique")
+    };
+  } catch {
+    return { bold: false, italic: false };
+  }
+}
 
-// ---- Shape helpers (only very safe shapes) ----
+// ---------- SAFE HELPERS ----------
 function isRotationZero(node: SceneNode): boolean {
-  // @ts-ignore
-  const rot = typeof node.rotation === "number" ? (node.rotation as number) : 0;
+  const rot = typeof (node as any).rotation === "number" ? (node as any).rotation : 0;
   return Math.abs(rot) < 0.01;
 }
 function hasAnyEffects(node: SceneNode): boolean {
   if (!("effects" in node)) return false;
-  const eff = node.effects;
+  const eff = (node as any).effects;
   if (!eff || eff === figma.mixed) return true;
   return (eff as readonly Effect[]).length > 0;
 }
+function hasImageFill(node: SceneNode): boolean {
+  if (!("fills" in node)) return false;
+  const fills = (node as any).fills;
+  if (!fills || fills === figma.mixed) return true;
+  return (fills as readonly Paint[]).some((p) => p.type === "IMAGE");
+}
+function hasOnlySolidFills(node: SceneNode): boolean {
+  if (!("fills" in node)) return true;
+  const fills = (node as any).fills;
+  if (!fills || fills === figma.mixed) return false;
+  return (fills as readonly Paint[]).every((p) => p.type === "SOLID");
+}
 function getSolidFill(node: SceneNode): string | null {
   if (!("fills" in node)) return null;
-  const fills = node.fills;
+  const fills = (node as any).fills;
   if (!fills || fills === figma.mixed) return null;
-  const onlySolid = (fills as readonly Paint[]).every((p) => p.type === "SOLID");
-  if (!onlySolid) return null;
+  if (!(fills as readonly Paint[]).every((p) => p.type === "SOLID")) return null;
   const solid = (fills as readonly Paint[]).find((p) => p.type === "SOLID") as SolidPaint | undefined;
   return solid ? rgbToHex(solid.color) : null;
 }
 function getSolidStroke(node: SceneNode): { color: string; width: number } | null {
   if (!("strokes" in node) || !("strokeWeight" in node)) return null;
-  const strokes = node.strokes;
-  // @ts-ignore
-  const sw = node.strokeWeight as number;
+  const strokes = (node as any).strokes;
+  const sw = (node as any).strokeWeight as number;
   if (!strokes || strokes === figma.mixed) return null;
-  const onlySolid = (strokes as readonly Paint[]).every((p) => p.type === "SOLID");
-  if (!onlySolid) return null;
+  if (!(strokes as readonly Paint[]).every((p) => p.type === "SOLID")) return null;
   const solid = (strokes as readonly Paint[]).find((p) => p.type === "SOLID") as SolidPaint | undefined;
   if (!solid) return null;
   return { color: rgbToHex(solid.color), width: typeof sw === "number" ? sw : 1 };
 }
 
+function getCornerRadiusAny(node: SceneNode): number {
+  // works for Rectangle/Frame/Component/Instance that support cornerRadius
+  const cr = (node as any).cornerRadius;
+  return typeof cr === "number" ? cr : 0;
+}
+
+function isSafeEditableRect(node: RectangleNode): boolean {
+  if (!isRotationZero(node)) return false;
+  if (hasAnyEffects(node)) return false;
+  if (hasImageFill(node)) return false;
+  if (!hasOnlySolidFills(node)) return false;
+  if ((node as any).strokes === figma.mixed) return false;
+  return true;
+}
+function isSafeEditableEllipse(node: EllipseNode): boolean {
+  if (!isRotationZero(node)) return false;
+  if (hasAnyEffects(node)) return false;
+  if (hasImageFill(node)) return false;
+  if (!hasOnlySolidFills(node)) return false;
+  return true;
+}
+function isSafeEditableLine(node: LineNode): boolean {
+  if (!isRotationZero(node)) return false;
+  if (hasAnyEffects(node)) return false;
+  return !!getSolidStroke(node);
+}
+
+// NEW: safe editable background for FRAME/INSTANCE/COMPONENT (pills)
+function isSafeEditableContainerBg(node: SceneNode): boolean {
+  // must support fills
+  if (!("fills" in (node as any))) return false;
+
+  if (!isRotationZero(node)) return false;
+  if (hasAnyEffects(node)) return false;
+  if (hasImageFill(node)) return false;
+  if (!hasOnlySolidFills(node)) return false;
+
+  // strokes must be solid if present
+  if ("strokes" in (node as any) && (node as any).strokes === figma.mixed) return false;
+
+  const fill = getSolidFill(node);
+  const stroke = getSolidStroke(node);
+
+  // only useful if it has some visible background
+  return !!(fill || stroke);
+}
+
+// ---------- CONTAINER TEXT DETECTOR ----------
+function isContainer(node: SceneNode): boolean {
+  return (
+    node.type === "FRAME" ||
+    node.type === "GROUP" ||
+    node.type === "INSTANCE" ||
+    node.type === "COMPONENT" ||
+    node.type === "COMPONENT_SET"
+  );
+}
+
+function containsTextDescendant(node: SceneNode): boolean {
+  if (!("children" in node)) return false;
+  const arr: SceneNode[] = [];
+  for (const c of (node.children as any)) arr.push(c as SceneNode);
+
+  while (arr.length) {
+    const n = arr.pop()!;
+    if ("visible" in n && (n as any).visible === false) continue;
+    if (n.type === "TEXT") return true;
+    if ("children" in n) {
+      for (const ch of (n.children as any)) arr.push(ch as SceneNode);
+    }
+  }
+  return false;
+}
+
+// ---------- RASTER POLICY ----------
+const RASTER_MAX_W = 420;
+const RASTER_MAX_H = 420;
+
+function shouldRasterOverlay(node: SceneNode): boolean {
+  if (!("visible" in node) || (node as any).visible === false) return false;
+  if (node.type === "TEXT") return false;
+
+  // Any image fill -> overlay
+  if (hasImageFill(node)) return true;
+
+  // Vector-ish items (icons/arrows)
+  if (
+    node.type === "VECTOR" ||
+    node.type === "BOOLEAN_OPERATION" ||
+    node.type === "STAR" ||
+    node.type === "POLYGON"
+  ) return true;
+
+  // Lines we can't make editable
+  if (node.type === "LINE" && !isSafeEditableLine(node as LineNode)) return true;
+
+  const small = node.width <= RASTER_MAX_W && node.height <= RASTER_MAX_H;
+
+  // Small containers often icons/masks/instances,
+  // BUT: if contains TEXT -> don't rasterize container
+  if (small && isContainer(node)) {
+    if (containsTextDescendant(node)) return false;
+    return true;
+  }
+
+  // Small primitives not safe -> overlay
+  if (small) {
+    if (node.type === "RECTANGLE" && !isSafeEditableRect(node as RectangleNode)) return true;
+    if (node.type === "ELLIPSE" && !isSafeEditableEllipse(node as EllipseNode)) return true;
+  }
+
+  return false;
+}
+
+async function rasterizeNodePNG(node: SceneNode, scale = 2): Promise<Uint8Array> {
+  return await node.exportAsync({
+    format: "PNG",
+    constraint: { type: "SCALE", value: scale }
+  });
+}
+
+// ---------- MAIN EXPORT ----------
 figma.ui.onmessage = async (msg) => {
   try {
     if (msg.type !== "EXPORT_PPTX") return;
@@ -149,90 +316,163 @@ figma.ui.onmessage = async (msg) => {
       return;
     }
 
-    postStatus("Lucy: collecting layers…");
+    postStatus("Lucy: scanning layers (v0.3.4)…");
 
-    const texts: ExportText[] = [];
-    const shapes: ExportShape[] = [];
+    const items: ExportItem[] = [];
+    const rasterCandidates: SceneNode[] = [];
 
-    const textNodes: TextNode[] = [];
-    const shapeNodes: SceneNode[] = [];
+    const toHideSet = new Set<string>();
+    const toHide: SceneNode[] = [];
+    function markHide(n: SceneNode) {
+      if (toHideSet.has(n.id)) return;
+      toHideSet.add(n.id);
+      toHide.push(n);
+    }
+
+    const zById = new Map<string, number>();
+    let z = 0;
 
     function walk(node: SceneNode) {
-      if ("visible" in node && node.visible === false) return;
+      if (!("visible" in node) || (node as any).visible === false) return;
 
-      if (node.type === "TEXT") {
-        const tn = node as TextNode;
-        const r = rectRelativeToFrame(tn, frame);
-        texts.push({
-          id: tn.id,
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          text: tn.characters ?? "",
-          fontFamily: getFirstCharFontFamily(tn),
-          fontSize: getFirstCharFontSize(tn),
-          color: getFirstCharFillHex(tn),
-          align: alignMap(tn.textAlignHorizontal),
-          opacity: typeof tn.opacity === "number" ? tn.opacity : 1
-        });
-        textNodes.push(tn);
-      }
+      if (node.id !== frame.id) {
+        z += 1;
+        zById.set(node.id, z);
 
-      // safe shapes only
-      const rotOk = isRotationZero(node);
-      const effOk = !hasAnyEffects(node);
+        // 1) TEXT
+        if (node.type === "TEXT") {
+          const tn = node as TextNode;
+          const r = rectRelativeToFrame(tn, frame);
+          const flags = getFirstCharFontStyleFlags(tn);
 
-      if (rotOk && effOk) {
+          items.push({
+            kind: "text",
+            z,
+            id: tn.id,
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            text: tn.characters ?? "",
+            fontFamily: getFirstCharFontFamily(tn),
+            fontSize: getFirstCharFontSize(tn),
+            color: getFirstCharFillHex(tn),
+            align: alignMap(tn.textAlignHorizontal),
+            opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+            bold: flags.bold,
+            italic: flags.italic
+          });
+
+          markHide(tn);
+          return;
+        }
+
+        // 2) SAFE editable rect/ellipse/line
         if (node.type === "RECTANGLE") {
-          const fill = getSolidFill(node);
-          const stroke = getSolidStroke(node);
-          // @ts-ignore
-          const radius = typeof (node as any).cornerRadius === "number" ? (node as any).cornerRadius : 0;
+          const rn = node as RectangleNode;
+          if (isSafeEditableRect(rn)) {
+            const r = rectRelativeToFrame(rn, frame);
+            const fill = getSolidFill(rn);
+            const stroke = getSolidStroke(rn);
+            const radius = getCornerRadiusAny(rn);
 
-          // если нет ни fill ни stroke — смысла нет
-          if (fill || stroke) {
+            if (fill || stroke) {
+              items.push({
+                kind: "shape",
+                z,
+                id: rn.id,
+                shape: "rect",
+                x: r.x, y: r.y, w: r.w, h: r.h,
+                fill,
+                stroke,
+                radius,
+                opacity: typeof rn.opacity === "number" ? rn.opacity : 1
+              });
+              markHide(rn);
+            }
+            return;
+          }
+        }
+
+        if (node.type === "ELLIPSE") {
+          const en = node as EllipseNode;
+          if (isSafeEditableEllipse(en)) {
+            const r = rectRelativeToFrame(en, frame);
+            const fill = getSolidFill(en);
+            const stroke = getSolidStroke(en);
+
+            if (fill || stroke) {
+              items.push({
+                kind: "shape",
+                z,
+                id: en.id,
+                shape: "ellipse",
+                x: r.x, y: r.y, w: r.w, h: r.h,
+                fill,
+                stroke,
+                radius: 0,
+                opacity: typeof en.opacity === "number" ? en.opacity : 1
+              });
+              markHide(en);
+            }
+            return;
+          }
+        }
+
+        if (node.type === "LINE") {
+          const ln = node as LineNode;
+          if (isSafeEditableLine(ln)) {
+            const r = rectRelativeToFrame(ln, frame);
+            const stroke = getSolidStroke(ln)!;
+
+            items.push({
+              kind: "shape",
+              z,
+              id: ln.id,
+              shape: "line",
+              x: r.x, y: r.y, w: r.w, h: r.h,
+              stroke,
+              opacity: typeof ln.opacity === "number" ? ln.opacity : 1
+            });
+            markHide(ln);
+            return;
+          }
+        }
+
+        // 2.5) NEW: FRAME/INSTANCE/COMPONENT background as editable rect,
+        // BUT DO NOT STOP — still traverse children for text/icons overlays
+        let exportedContainerBg = false;
+        if (node.type === "FRAME" || node.type === "INSTANCE" || node.type === "COMPONENT") {
+          if (isSafeEditableContainerBg(node)) {
             const r = rectRelativeToFrame(node, frame);
-            shapes.push({
+            const fill = getSolidFill(node);
+            const stroke = getSolidStroke(node);
+            const radius = getCornerRadiusAny(node);
+
+            items.push({
+              kind: "shape",
+              z,
               id: node.id,
-              kind: "rect",
+              shape: "rect",
               x: r.x, y: r.y, w: r.w, h: r.h,
               fill,
               stroke,
-              radius: radius ?? 0,
+              radius,
               opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
             });
-            shapeNodes.push(node);
+
+            // hide the container so its bg doesn't bake into BG export
+            markHide(node);
+            exportedContainerBg = true;
           }
-        } else if (node.type === "ELLIPSE") {
-          const fill = getSolidFill(node);
-          const stroke = getSolidStroke(node);
-          if (fill || stroke) {
-            const r = rectRelativeToFrame(node, frame);
-            shapes.push({
-              id: node.id,
-              kind: "ellipse",
-              x: r.x, y: r.y, w: r.w, h: r.h,
-              fill,
-              stroke,
-              radius: 0,
-              opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
-            });
-            shapeNodes.push(node);
-          }
-        } else if (node.type === "LINE") {
-          const stroke = getSolidStroke(node);
-          if (stroke) {
-            const r = rectRelativeToFrame(node, frame);
-            shapes.push({
-              id: node.id,
-              kind: "line",
-              x: r.x, y: r.y, w: r.w, h: r.h,
-              stroke,
-              opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
-            });
-            shapeNodes.push(node);
-          }
+        }
+
+        // 3) Raster overlay candidate (only if we didn't export container bg and policy says so)
+        if (!exportedContainerBg && shouldRasterOverlay(node)) {
+          rasterCandidates.push(node);
+          markHide(node);
+          return; // stop: raster node as a whole
         }
       }
 
+      // Traverse children
       if ("children" in node) {
         for (const ch of node.children) walk(ch as SceneNode);
       }
@@ -240,53 +480,68 @@ figma.ui.onmessage = async (msg) => {
 
     walk(frame);
 
-    // ---- Export BG without text + without safe shapes ----
-    postStatus("Lucy: exporting background (without text & safe shapes)…");
+    // Rasterize
+    if (rasterCandidates.length) {
+      postStatus(`Lucy: rasterizing ${rasterCandidates.length} overlays…`);
+    }
+
+    const rasterItems: ExportRaster[] = [];
+    for (let i = 0; i < rasterCandidates.length; i++) {
+      const n = rasterCandidates[i];
+      try {
+        const r = rectRelativeToFrame(n, frame);
+        if (r.w > frame.width * 0.98 && r.h > frame.height * 0.98) continue;
+        if (r.w <= 0 || r.h <= 0) continue;
+
+        postStatus(`Lucy: raster ${i + 1}/${rasterCandidates.length}…`);
+        const bytes = await rasterizeNodePNG(n, 2);
+
+        rasterItems.push({
+          kind: "raster",
+          z: zById.get(n.id) ?? 999999,
+          id: n.id,
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          pngBytes: Array.from(bytes)
+        });
+      } catch {
+        // ignore
+      }
+    }
+
+    const allItems: ExportItem[] = [...items, ...rasterItems];
+
+    // Export clean BG
+    postStatus("Lucy: exporting background (clean)…");
 
     const prevVisible = new Map<string, boolean>();
-
-    // hide texts + shapes
-    for (const tn of textNodes) {
-      prevVisible.set(tn.id, tn.visible);
-      tn.visible = false;
-    }
-    for (const sn of shapeNodes) {
-      // @ts-ignore
-      prevVisible.set(sn.id, sn.visible);
-      // @ts-ignore
-      sn.visible = false;
+    for (const n of toHide) {
+      prevVisible.set(n.id, (n as any).visible);
+      (n as any).visible = false;
     }
 
     const scale = 2;
-    let pngBytes: Uint8Array;
+    let bgPng: Uint8Array;
     try {
-      pngBytes = await frame.exportAsync({
+      bgPng = await frame.exportAsync({
         format: "PNG",
         constraint: { type: "SCALE", value: scale }
       });
     } finally {
-      // restore
-      for (const tn of textNodes) {
-        const v = prevVisible.get(tn.id);
-        if (typeof v === "boolean") tn.visible = v;
-      }
-      for (const sn of shapeNodes) {
-        const v = prevVisible.get(sn.id);
-        // @ts-ignore
-        if (typeof v === "boolean") sn.visible = v;
+      for (const n of toHide) {
+        const v = prevVisible.get(n.id);
+        if (typeof v === "boolean") (n as any).visible = v;
       }
     }
 
     figma.ui.postMessage({
-      type: "FRAME_BG_PNG_TEXT_SHAPES",
-      bgPngBytes: Array.from(pngBytes),
+      type: "FRAME_BG_AND_ITEMS_V031", // ui.ts compatible
+      bgPngBytes: Array.from(bgPng),
       filename: `${frame.name}.pptx`,
       frame: { name: frame.name, width: frame.width, height: frame.height, scale },
-      texts,
-      shapes
+      items: allItems
     });
 
-    postStatus(`Lucy: sent BG + ${texts.length} texts + ${shapes.length} shapes ✅`);
+    postStatus(`Lucy: sent BG + overlays (${allItems.length}) ✅`);
   } catch (e: any) {
     postError(e?.message ?? String(e));
   }
