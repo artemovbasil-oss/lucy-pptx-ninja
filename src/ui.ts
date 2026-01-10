@@ -1,4 +1,4 @@
-// src/ui.ts (v0.3.6)
+// src/ui.ts (v0.3.7-dev)
 import PptxGenJS from "pptxgenjs";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
@@ -19,26 +19,30 @@ function clamp(n: number, a: number, b: number) {
 // --- TEXT SIZE CALIBRATION ---
 // PptxGenJS fontSize is POINTS. Figma gives px.
 // Base conversion is px*0.75, then we calibrate down a bit.
-const FONT_SCALE = 0.705; // <-- было 0.72, стало чуть меньше (попадание ближе к Figma)
+const FONT_SCALE = 0.705;
 function pxToPt(px: number) {
   return px * FONT_SCALE;
 }
 
 // --- TEXT BOX FIXES (wrapping) ---
-// PowerPoint text boxes have internal margins/insets by default.
-// We set margin=0 and slightly increase the width to reduce unwanted wrapping.
-const TEXT_BOX_W_PAD_PX = 10; // добавляем ширины, чтобы строки не переносились
-const TEXT_BOX_H_PAD_PX = 2;  // чуть-чуть высоты (на всякий)
-const TEXT_BOX_MARGIN_IN = 0; // remove internal inset  [oai_citation:1‡gitbrent.github.io](https://gitbrent.github.io/PptxGenJS/docs/api-text.html?utm_source=chatgpt.com)
+// PowerPoint text boxes have internal insets by default. We remove them and add width padding.
+const TEXT_BOX_W_PAD_PX = 10;
+const TEXT_BOX_H_PAD_PX = 2;
 
-// Your previous nudges
+// Your previous X nudge
 const TEXT_NUDGE_X_PX = -2;
-const TEXT_NUDGE_Y_PX = -2;
+
+// Auto Y nudge by font size (PPT baseline fix)
+function getTextNudgeYPx(fontSizePx: number): number {
+  if (fontSizePx >= 28) return 1;  // big headers: slightly down
+  if (fontSizePx >= 16) return 2;  // main UI text: down a bit more
+  return 1;                        // small text: down
+}
+
+// Extra height padding you already had
 const TEXT_HEIGHT_PAD_PX = 4;
 
 // --- SHAPE RADIUS CALIBRATION ---
-// PPT rounding ratio (rectRadius) visually отличается от “px radius” из Figma.
-// Добавляем небольшой коэффициент к радиусу.
 const RADIUS_SCALE = 1.10;
 
 // PptxGenJS uses transparency 0..100 (percent).
@@ -47,25 +51,21 @@ function opacityToTransparencyPct(opacity01: number | undefined) {
   return Math.round((1 - o) * 100);
 }
 
-// For rounded rectangles PptxGenJS supports rectRadius (0..1 ratio).  [oai_citation:2‡gitbrent.github.io](https://gitbrent.github.io/PptxGenJS/docs/api-text.html?utm_source=chatgpt.com)
+// PptxGenJS roundRect uses rectRadius ratio (0..1)
 function figmaRadiusPxToRectRadiusRatio(radiusPx: number | undefined, wPx: number, hPx: number) {
   const r0 = typeof radiusPx === "number" ? Math.max(0, radiusPx) : 0;
   if (r0 <= 0) return 0;
 
   const r = r0 * RADIUS_SCALE;
   const halfMin = Math.max(1, Math.min(wPx, hPx) / 2);
-
   return clamp(r / halfMin, 0, 1);
 }
 
-// --- FONT MAPPING ---
-// PowerPoint will substitute fonts that aren't installed.
-// Mapping helps reduce “random” substitutions by forcing PPT-safe families.
+// --- FONT MAPPING (reduces random substitutions in PPT) ---
 function mapFontFamily(figmaFamily: string | undefined): string {
   const f = (figmaFamily || "").trim();
   const key = f.toLowerCase();
 
-  // Common designer fonts -> PPT-friendly fallbacks
   if (key.includes("inter")) return "Calibri";
   if (key.includes("sf pro") || key.includes("san francisco")) return "Arial";
   if (key.includes("helvetica")) return "Helvetica";
@@ -75,7 +75,6 @@ function mapFontFamily(figmaFamily: string | undefined): string {
   if (key.includes("montserrat")) return "Calibri";
   if (key.includes("poppins")) return "Calibri";
 
-  // If already common office fonts, keep
   if (key.includes("calibri")) return "Calibri";
   if (key.includes("arial")) return "Arial";
   if (key.includes("times")) return "Times New Roman";
@@ -83,7 +82,6 @@ function mapFontFamily(figmaFamily: string | undefined): string {
   if (key.includes("verdana")) return "Verdana";
   if (key.includes("tahoma")) return "Tahoma";
 
-  // Default safe fallback
   return f || "Calibri";
 }
 
@@ -111,7 +109,7 @@ window.onmessage = async (event) => {
 
   if (msg.type === "FRAME_BG_AND_ITEMS_V031") {
     try {
-      setStatus("Lucy: building PPTX v0.3.6…");
+      setStatus("Lucy: building PPTX v0.3.7-dev…");
 
       const bgBytes = new Uint8Array(msg.bgPngBytes);
       const bgB64 = uint8ToBase64(bgBytes);
@@ -161,15 +159,10 @@ window.onmessage = async (event) => {
           const opacity = typeof it.opacity === "number" ? it.opacity : 1;
           const tr = opacityToTransparencyPct(opacity);
 
-          const fillProps =
-            it.fill
-              ? { color: it.fill, transparency: tr }
-              : undefined;
-
-          const lineProps =
-            it.stroke
-              ? { color: it.stroke.color, width: pxToIn(it.stroke.width), transparency: tr }
-              : undefined;
+          const fillProps = it.fill ? { color: it.fill, transparency: tr } : undefined;
+          const lineProps = it.stroke
+            ? { color: it.stroke.color, width: pxToIn(it.stroke.width), transparency: tr }
+            : undefined;
 
           if (it.shape === "rect") {
             const radiusPx = typeof it.radius === "number" ? it.radius : 0;
@@ -208,30 +201,42 @@ window.onmessage = async (event) => {
         if (it.kind === "text") {
           if (!it.text || String(it.text).length === 0) continue;
 
-          // Expand width slightly to reduce wrap.
-          // Keep x the same (expand to the right) — safest.
+          const fsPx = Number(it.fontSize || 14);
+
           const xPx = (it.x ?? 0) + TEXT_NUDGE_X_PX;
-          const yPx = (it.y ?? 0) + TEXT_NUDGE_Y_PX;
+          const yPx = (it.y ?? 0) + getTextNudgeYPx(fsPx);
+
           const wPx = (it.w ?? 10) + TEXT_BOX_W_PAD_PX;
           const hPx = (it.h ?? 10) + TEXT_HEIGHT_PAD_PX + TEXT_BOX_H_PAD_PX;
 
           const opacity = typeof it.opacity === "number" ? it.opacity : 1;
           const tr = opacityToTransparencyPct(opacity);
 
+          // line-height best effort: px -> pt
+          const lhPx = typeof it.lineHeightPx === "number" ? it.lineHeightPx : null;
+          const lineSpacingPt = lhPx ? Math.max(1, Math.round(pxToPt(lhPx))) : undefined;
+
           slide.addText(String(it.text), {
             x: pxToIn(xPx),
             y: pxToIn(yPx),
             w: pxToIn(wPx),
             h: pxToIn(hPx),
-            margin: TEXT_BOX_MARGIN_IN, // remove default inset  [oai_citation:3‡gitbrent.github.io](https://gitbrent.github.io/PptxGenJS/docs/api-text.html?utm_source=chatgpt.com)
+
+            // remove internal insets
+            margin: 0,
+            inset: 0,
+
             fontFace: mapFontFamily(it.fontFamily),
-            fontSize: Math.max(1, Math.round(pxToPt(it.fontSize || 14))),
+            fontSize: Math.max(1, Math.round(pxToPt(fsPx))),
             bold: !!it.bold,
             italic: !!it.italic,
+
             color: it.color || "000000",
             align: it.align || "left",
             valign: "top",
-            transparency: tr
+            transparency: tr,
+
+            ...(lineSpacingPt ? { lineSpacing: lineSpacingPt } : {})
           });
           continue;
         }
