@@ -1,4 +1,4 @@
-// src/code.ts (v0.3.4)
+// src/code.ts (v0.3.5-dev)
 figma.showUI(__html__, { width: 320, height: 320 });
 
 function postStatus(text: string) {
@@ -42,6 +42,7 @@ type ExportText = {
   text: string;
   fontFamily: string;
   fontSize: number; // px from Figma
+  lineHeightPx?: number | null; // new: px line-height (best effort)
   color: string;
   align: "left" | "center" | "right" | "justify";
   opacity: number;
@@ -142,6 +143,20 @@ function getFirstCharFontStyleFlags(tn: TextNode): { bold: boolean; italic: bool
   }
 }
 
+// New: best-effort line-height (px)
+function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
+  try {
+    const lh = tn.lineHeight;
+    if (!lh || lh === figma.mixed) return null;
+    if (lh.unit === "AUTO") return null;
+    if (lh.unit === "PIXELS") return typeof lh.value === "number" ? lh.value : null;
+    if (lh.unit === "PERCENT") return typeof lh.value === "number" ? (fontSizePx * lh.value) / 100 : null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------- SAFE HELPERS ----------
 function isRotationZero(node: SceneNode): boolean {
   const rot = typeof (node as any).rotation === "number" ? (node as any).rotation : 0;
@@ -185,7 +200,6 @@ function getSolidStroke(node: SceneNode): { color: string; width: number } | nul
 }
 
 function getCornerRadiusAny(node: SceneNode): number {
-  // works for Rectangle/Frame/Component/Instance that support cornerRadius
   const cr = (node as any).cornerRadius;
   return typeof cr === "number" ? cr : 0;
 }
@@ -211,23 +225,17 @@ function isSafeEditableLine(node: LineNode): boolean {
   return !!getSolidStroke(node);
 }
 
-// NEW: safe editable background for FRAME/INSTANCE/COMPONENT (pills)
+// Container background (pills/cards)
 function isSafeEditableContainerBg(node: SceneNode): boolean {
-  // must support fills
   if (!("fills" in (node as any))) return false;
-
   if (!isRotationZero(node)) return false;
   if (hasAnyEffects(node)) return false;
   if (hasImageFill(node)) return false;
   if (!hasOnlySolidFills(node)) return false;
-
-  // strokes must be solid if present
   if ("strokes" in (node as any) && (node as any).strokes === figma.mixed) return false;
 
   const fill = getSolidFill(node);
   const stroke = getSolidStroke(node);
-
-  // only useful if it has some visible background
   return !!(fill || stroke);
 }
 
@@ -266,10 +274,8 @@ function shouldRasterOverlay(node: SceneNode): boolean {
   if (!("visible" in node) || (node as any).visible === false) return false;
   if (node.type === "TEXT") return false;
 
-  // Any image fill -> overlay
   if (hasImageFill(node)) return true;
 
-  // Vector-ish items (icons/arrows)
   if (
     node.type === "VECTOR" ||
     node.type === "BOOLEAN_OPERATION" ||
@@ -277,19 +283,15 @@ function shouldRasterOverlay(node: SceneNode): boolean {
     node.type === "POLYGON"
   ) return true;
 
-  // Lines we can't make editable
   if (node.type === "LINE" && !isSafeEditableLine(node as LineNode)) return true;
 
   const small = node.width <= RASTER_MAX_W && node.height <= RASTER_MAX_H;
 
-  // Small containers often icons/masks/instances,
-  // BUT: if contains TEXT -> don't rasterize container
   if (small && isContainer(node)) {
     if (containsTextDescendant(node)) return false;
     return true;
   }
 
-  // Small primitives not safe -> overlay
   if (small) {
     if (node.type === "RECTANGLE" && !isSafeEditableRect(node as RectangleNode)) return true;
     if (node.type === "ELLIPSE" && !isSafeEditableEllipse(node as EllipseNode)) return true;
@@ -316,7 +318,7 @@ figma.ui.onmessage = async (msg) => {
       return;
     }
 
-    postStatus("Lucy: scanning layers (v0.3.4)…");
+    postStatus("Lucy: scanning layers (v0.3.5-dev)…");
 
     const items: ExportItem[] = [];
     const rasterCandidates: SceneNode[] = [];
@@ -339,11 +341,12 @@ figma.ui.onmessage = async (msg) => {
         z += 1;
         zById.set(node.id, z);
 
-        // 1) TEXT
+        // TEXT
         if (node.type === "TEXT") {
           const tn = node as TextNode;
           const r = rectRelativeToFrame(tn, frame);
           const flags = getFirstCharFontStyleFlags(tn);
+          const fs = getFirstCharFontSize(tn);
 
           items.push({
             kind: "text",
@@ -352,7 +355,8 @@ figma.ui.onmessage = async (msg) => {
             x: r.x, y: r.y, w: r.w, h: r.h,
             text: tn.characters ?? "",
             fontFamily: getFirstCharFontFamily(tn),
-            fontSize: getFirstCharFontSize(tn),
+            fontSize: fs,
+            lineHeightPx: getTextLineHeightPx(tn, fs),
             color: getFirstCharFillHex(tn),
             align: alignMap(tn.textAlignHorizontal),
             opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
@@ -364,7 +368,7 @@ figma.ui.onmessage = async (msg) => {
           return;
         }
 
-        // 2) SAFE editable rect/ellipse/line
+        // SHAPES
         if (node.type === "RECTANGLE") {
           const rn = node as RectangleNode;
           if (isSafeEditableRect(rn)) {
@@ -436,8 +440,7 @@ figma.ui.onmessage = async (msg) => {
           }
         }
 
-        // 2.5) NEW: FRAME/INSTANCE/COMPONENT background as editable rect,
-        // BUT DO NOT STOP — still traverse children for text/icons overlays
+        // Container background as editable rect (but continue walking children)
         let exportedContainerBg = false;
         if (node.type === "FRAME" || node.type === "INSTANCE" || node.type === "COMPONENT") {
           if (isSafeEditableContainerBg(node)) {
@@ -458,21 +461,19 @@ figma.ui.onmessage = async (msg) => {
               opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
             });
 
-            // hide the container so its bg doesn't bake into BG export
             markHide(node);
             exportedContainerBg = true;
           }
         }
 
-        // 3) Raster overlay candidate (only if we didn't export container bg and policy says so)
+        // Raster overlay candidate (only if we didn't export container bg)
         if (!exportedContainerBg && shouldRasterOverlay(node)) {
           rasterCandidates.push(node);
           markHide(node);
-          return; // stop: raster node as a whole
+          return;
         }
       }
 
-      // Traverse children
       if ("children" in node) {
         for (const ch of node.children) walk(ch as SceneNode);
       }
@@ -510,7 +511,7 @@ figma.ui.onmessage = async (msg) => {
 
     const allItems: ExportItem[] = [...items, ...rasterItems];
 
-    // Export clean BG
+    // Export clean BG (hide everything we will overlay)
     postStatus("Lucy: exporting background (clean)…");
 
     const prevVisible = new Map<string, boolean>();
@@ -534,7 +535,7 @@ figma.ui.onmessage = async (msg) => {
     }
 
     figma.ui.postMessage({
-      type: "FRAME_BG_AND_ITEMS_V031", // ui.ts compatible
+      type: "FRAME_BG_AND_ITEMS_V031", // UI compatible
       bgPngBytes: Array.from(bgPng),
       filename: `${frame.name}.pptx`,
       frame: { name: frame.name, width: frame.width, height: frame.height, scale },
