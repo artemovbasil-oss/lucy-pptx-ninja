@@ -1,4 +1,4 @@
-// src/ui.ts (v0.4.4-dev) — Cancel support + loading/lock UI
+// src/ui.ts (v0.5.1-dev) — PPT builder: smart BG + masked images + cancel UI
 import PptxGenJS from "pptxgenjs";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
@@ -30,6 +30,7 @@ const TEXT_BOX_H_PAD_PX = 2;
 const TEXT_NUDGE_X_PX = -2;
 const TEXT_HEIGHT_PAD_PX = 4;
 
+// Baseline offsets
 function getTextNudgeYPx(fontSizePx: number): number {
   if (fontSizePx >= 28) return 1;
   if (fontSizePx >= 16) return 2;
@@ -55,6 +56,7 @@ function figmaRadiusPxToRectRadiusRatio(radiusPx: number | undefined, wPx: numbe
 function mapFontFamily(figmaFamily: string | undefined): string {
   const f = (figmaFamily || "").trim();
   const key = f.toLowerCase();
+
   if (key.includes("inter")) return "Calibri";
   if (key.includes("sf pro") || key.includes("san francisco")) return "Arial";
   if (key.includes("helvetica")) return "Helvetica";
@@ -63,12 +65,14 @@ function mapFontFamily(figmaFamily: string | undefined): string {
   if (key.includes("manrope")) return "Calibri";
   if (key.includes("montserrat")) return "Calibri";
   if (key.includes("poppins")) return "Calibri";
+
   if (key.includes("calibri")) return "Calibri";
   if (key.includes("arial")) return "Arial";
   if (key.includes("times")) return "Times New Roman";
   if (key.includes("georgia")) return "Georgia";
   if (key.includes("verdana")) return "Verdana";
   if (key.includes("tahoma")) return "Tahoma";
+
   return f || "Calibri";
 }
 
@@ -241,6 +245,7 @@ type ExportSlide = {
   height: number;
   scale: number;
   bgPngBytes: number[];
+  bgShape?: { fill: string; opacity: number } | null;
   items: Array<any>;
 };
 
@@ -268,16 +273,32 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
     const trf = buildTransformForSlide(targetWpx, targetHpx, sd.width, sd.height);
     const slide = pptx.addSlide();
 
-    const bgBytes = new Uint8Array(sd.bgPngBytes);
-    const bgB64 = uint8ToBase64(bgBytes);
+    // 1) Smart background (shape)
+    if (sd.bgShape && sd.bgShape.fill) {
+      const tPct = opacityToTransparencyPct(sd.bgShape.opacity ?? 1);
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0,
+        y: 0,
+        w: pxToIn(targetWpx),
+        h: pxToIn(targetHpx),
+        fill: { color: sd.bgShape.fill, transparency: tPct },
+        line: { color: sd.bgShape.fill, transparency: 100, width: 0 }
+      });
+    }
 
-    slide.addImage({
-      data: "data:image/png;base64," + bgB64,
-      x: pxToIn(trf.ox),
-      y: pxToIn(trf.oy),
-      w: pxToIn(trf.outW),
-      h: pxToIn(trf.outH)
-    });
+    // 2) Background PNG fallback
+    if (sd.bgPngBytes && sd.bgPngBytes.length > 0) {
+      const bgBytes = new Uint8Array(sd.bgPngBytes);
+      const bgB64 = uint8ToBase64(bgBytes);
+
+      slide.addImage({
+        data: "data:image/png;base64," + bgB64,
+        x: pxToIn(trf.ox),
+        y: pxToIn(trf.oy),
+        w: pxToIn(trf.outW),
+        h: pxToIn(trf.outH)
+      });
+    }
 
     const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
@@ -287,10 +308,37 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
       const sw = (v: number) => v * trf.s;
       const sh = (v: number) => v * trf.s;
 
+      if (it.kind === "maskedImage") {
+        const bytes = new Uint8Array(it.pngBytes);
+        const b64 = uint8ToBase64(bytes);
+
+        const crop = it.crop || { x: 0, y: 0, w: 1, h: 1 };
+        slide.addImage({
+          data: "data:image/png;base64," + b64,
+          x: pxToIn(sx(it.x)),
+          y: pxToIn(sy(it.y)),
+          w: pxToIn(sw(it.w)),
+          h: pxToIn(sh(it.h)),
+          crop: {
+            x: clamp(Number(crop.x || 0), 0, 1),
+            y: clamp(Number(crop.y || 0), 0, 1),
+            w: clamp(Number(crop.w || 1), 0, 1),
+            h: clamp(Number(crop.h || 1), 0, 1)
+          }
+        });
+        continue;
+      }
+
       if (it.kind === "raster") {
         const bytes = new Uint8Array(it.pngBytes);
         const b64 = uint8ToBase64(bytes);
-        slide.addImage({ data: "data:image/png;base64," + b64, x: pxToIn(sx(it.x)), y: pxToIn(sy(it.y)), w: pxToIn(sw(it.w)), h: pxToIn(sh(it.h)) });
+        slide.addImage({
+          data: "data:image/png;base64," + b64,
+          x: pxToIn(sx(it.x)),
+          y: pxToIn(sy(it.y)),
+          w: pxToIn(sw(it.w)),
+          h: pxToIn(sh(it.h))
+        });
         continue;
       }
 
@@ -309,11 +357,32 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         if (it.shape === "rect") {
           const radiusPx = typeof it.radius === "number" ? it.radius : 0;
           const rr = figmaRadiusPxToRectRadiusRatio(radiusPx * trf.s, w * trf.s, h * trf.s);
-          slide.addShape(pptx.ShapeType.roundRect, { x: pxToIn(sx(x)), y: pxToIn(sy(y)), w: pxToIn(sw(w)), h: pxToIn(sh(h)), fill: fillProps, line: lineProps, rectRadius: rr });
+          slide.addShape(pptx.ShapeType.roundRect, {
+            x: pxToIn(sx(x)),
+            y: pxToIn(sy(y)),
+            w: pxToIn(sw(w)),
+            h: pxToIn(sh(h)),
+            fill: fillProps,
+            line: lineProps,
+            rectRadius: rr
+          });
         } else if (it.shape === "ellipse") {
-          slide.addShape(pptx.ShapeType.ellipse, { x: pxToIn(sx(x)), y: pxToIn(sy(y)), w: pxToIn(sw(w)), h: pxToIn(sh(h)), fill: fillProps, line: lineProps });
+          slide.addShape(pptx.ShapeType.ellipse, {
+            x: pxToIn(sx(x)),
+            y: pxToIn(sy(y)),
+            w: pxToIn(sw(w)),
+            h: pxToIn(sh(h)),
+            fill: fillProps,
+            line: lineProps
+          });
         } else if (it.shape === "line") {
-          slide.addShape(pptx.ShapeType.line, { x: pxToIn(sx(x)), y: pxToIn(sy(y)), w: pxToIn(sw(it.w)), h: pxToIn(sh(it.h)), line: lineProps ?? { color: it.stroke.color, width: pxToIn(sw(it.stroke.width)), transparency: tPct } });
+          slide.addShape(pptx.ShapeType.line, {
+            x: pxToIn(sx(x)),
+            y: pxToIn(sy(y)),
+            w: pxToIn(sw(it.w)),
+            h: pxToIn(sh(it.h)),
+            line: lineProps ?? { color: it.stroke.color, width: pxToIn(sw(it.stroke.width)), transparency: tPct }
+          });
         }
         continue;
       }
@@ -324,17 +393,17 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         const baseFsPx = Number(it.fontSize || 14);
         const effFsPx = baseFsPx * trf.s;
 
-        const xNudge = TEXT_NUDGE_X_PX * trf.s;
+        const xNudge = -2 * trf.s;
         const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
 
         const xPx = sx((it.x ?? 0) + xNudge);
         const yPx = sy((it.y ?? 0) + yNudge);
 
-        const wPad = TEXT_BOX_W_PAD_PX * trf.s;
-        const hPad = TEXT_BOX_H_PAD_PX * trf.s;
+        const wPad = (10 + 2) * trf.s;
+        const hPad = 2 * trf.s;
 
         const wPx = sw((it.w ?? 10) + wPad);
-        const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + hPad);
+        const hPx = sh((it.h ?? 10) + 4 + hPad);
 
         const opacity = typeof it.opacity === "number" ? it.opacity : 1;
         const tPct = opacityToTransparencyPct(opacity);
@@ -410,7 +479,7 @@ window.onmessage = async (event) => {
     return;
   }
 
-  if (msg.type === "BATCH_BG_AND_ITEMS_V040") {
+  if (msg.type === "BATCH_BG_AND_ITEMS_V051") {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
