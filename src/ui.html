@@ -88,11 +88,16 @@
 
       .btnPrimary {
         border-color: transparent;
-        background: var(--accent);
+        background: linear-gradient(180deg, #8fd7e3, #6fc3d4);
         color: #06262b;
         font-weight: 900;
+        box-shadow: 0 10px 24px rgba(133,205,219,0.18), inset 0 1px 0 rgba(255,255,255,0.35);
       }
-      .btnPrimary:hover { border-color: transparent; box-shadow: 0 10px 24px rgba(133,205,219,0.20), 0 0 0 3px rgba(133,205,219,0.18); }
+      .btnPrimary:hover {
+        border-color: transparent;
+        background: linear-gradient(180deg, #9de0eb, #7ccddb);
+        box-shadow: 0 12px 26px rgba(133,205,219,0.22), 0 0 0 3px rgba(133,205,219,0.18);
+      }
       .btnPrimary:active { transform: translateY(1px) scale(0.99); filter: brightness(0.98); }
 
       .btnDanger {
@@ -141,6 +146,26 @@
         transition: width .15s var(--ease);
       }
       .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 8px; gap: 10px; }
+      .stateDot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #666;
+        box-shadow: none;
+      }
+      .stateDot.idle { background: rgba(167,167,179,0.65); }
+      .stateDot.processing {
+        background: var(--accent);
+        box-shadow: 0 0 10px rgba(133,205,219,0.45);
+      }
+      .stateDot.success {
+        background: #6EE7B7;
+        box-shadow: 0 0 10px rgba(110,231,183,0.35);
+      }
+      .stateDot.error {
+        background: #F87171;
+        box-shadow: 0 0 10px rgba(248,113,113,0.35);
+      }
       .status { white-space: pre-line; margin-top: 8px; color: var(--muted); }
 
       /* Slides list */
@@ -253,7 +278,7 @@
       <div class="header">
         <div>
           <div class="title">Lucy — PPTX Ninja</div>
-          <div class="subtitle">v0.4 batch export</div>
+          <div class="subtitle" id="version">v0.5 · Section export</div>
         </div>
       </div>
 
@@ -267,7 +292,7 @@
 
         <div class="progline">
           <div id="progText" class="muted">Idle</div>
-          <div class="muted" id="tinyHint"></div>
+          <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
         </div>
 
         <div id="status" class="status">Select one or more frames.</div>

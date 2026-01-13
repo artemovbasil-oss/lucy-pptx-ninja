@@ -1,6 +1,10 @@
 // src/ui.ts (v0.5.4-dev) — Font handling improvements + bgShape support + V051 handler
 import PptxGenJS from "pptxgenjs";
 
+// Keep these in sync with your release notes
+const UI_VERSION = "v0.5";
+const UI_HIGHLIGHT = "Section export";
+
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
 const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
@@ -10,11 +14,13 @@ const barEl = document.getElementById("bar") as HTMLDivElement;
 // main progress percent is intentionally hidden (we show a bar + label instead)
 const pctEl = document.getElementById("pct") as HTMLDivElement | null;
 const progTextEl = document.getElementById("progText") as HTMLDivElement;
-const tinyHintEl = document.getElementById("tinyHint") as HTMLDivElement;
+const stateDotEl = document.getElementById("stateDot") as HTMLDivElement;
 
 const listEl = document.getElementById("list") as HTMLDivElement;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
 const footerEl = document.getElementById("footer") as HTMLDivElement;
+
+const versionEl = document.getElementById("version") as HTMLDivElement | null;
 
 // Busy overlay elements
 const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
@@ -25,6 +31,8 @@ const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonE
 
 
 const ctaTextEl = exportBtn.querySelector(".ctaText") as HTMLSpanElement | null;
+
+if (versionEl) versionEl.textContent = `${UI_VERSION} · ${UI_HIGHLIGHT}`;
 
 function pxToIn(px: number) { return px / 96; }
 function clamp(n: number, a: number, b: number) { return Math.max(a, Math.min(b, n)); }
@@ -114,6 +122,13 @@ function uint8ToBase64(u8: Uint8Array): string {
 
 function setStatus(msg: string) { statusEl.textContent = msg; }
 
+type UiState = "idle" | "processing" | "success" | "error";
+function setState(state: UiState) {
+  if (!stateDotEl) return;
+  stateDotEl.classList.remove("idle", "processing", "success", "error");
+  stateDotEl.classList.add(state);
+}
+
 function setProgress(phase: string, current: number, total: number, label?: string, text?: string) {
   const t = Math.max(1, total);
   const c = clamp(current, 0, t);
@@ -124,12 +139,10 @@ function setProgress(phase: string, current: number, total: number, label?: stri
   if (isBusy && ringEl) ringEl.style.setProperty("--p", String(p));
   if (isBusy && overlayHintEl && phase) overlayHintEl.textContent = String(phase);
   progTextEl.textContent = label ? label : `${c}/${t}`;
-  if (tinyHintEl) tinyHintEl.textContent = phase ? String(phase) : "";
   if (text) setStatus(text);
 }
 
 let isBusy = false;
-
 
 function showBusyOverlay(show: boolean) {
   if (!busyOverlayEl) return;
@@ -147,6 +160,8 @@ function setBusy(next: boolean, ctaLabel?: string) {
   isBusy = next;
   // show overlay only during export
   showBusyOverlay(next);
+
+  setState(next ? "processing" : "idle");
 
   exportBtn.disabled = next;
   refreshBtn.disabled = next;
@@ -489,6 +504,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   if (tinyHintEl && fontsHint) tinyHintEl.textContent = fontsHint;
 
   setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
+  setState("success");
 }
 
 window.onmessage = async (event) => {
@@ -498,10 +514,9 @@ window.onmessage = async (event) => {
   if (msg.type === "STATUS") { setStatus(msg.text); return; }
 
   if (msg.type === "ERROR") {
-    showBusyOverlay(false);
     setStatus("Error:\n" + msg.text);
     setBusy(false, "Export PPTX");
-    showBusyOverlay(false);
+    setState("error");
     return;
   }
 
@@ -511,7 +526,6 @@ window.onmessage = async (event) => {
     setStatus(currentFrames.length ? `Selected frames: ${currentFrames.length}` : "Select one or more frames.");
     setProgress("idle", 0, 1, "Idle");
     setBusy(false, "Export PPTX");
-    showBusyOverlay(false);
     return;
   }
 
@@ -521,10 +535,8 @@ window.onmessage = async (event) => {
   }
 
   if (msg.type === "CANCELLED") {
-    showBusyOverlay(false);
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
-    showBusyOverlay(false);
     return;
   }
 
@@ -533,28 +545,32 @@ window.onmessage = async (event) => {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
-return;
+      setBusy(false, "Export PPTX");
+      setState("error");
+      return;
     }
     try {
       await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
     } finally {
-      showBusyOverlay(false);
       setBusy(false, "Export PPTX");
     }
-}
+    return;
+  }
 
   // legacy handler (keep if you still receive it somewhere)
   if (msg.type === "BATCH_BG_AND_ITEMS_V040") {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
-return;
+      setBusy(false, "Export PPTX");
+      setState("error");
+      return;
     }
     try {
       await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
     } finally {
-      showBusyOverlay(false);
       setBusy(false, "Export PPTX");
     }
-}
+    return;
+  }
 };
