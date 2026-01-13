@@ -3,3 +3,58 @@ body { font-family: Inter, system-ui, Arial; margin: 0; }
 button { width: 100%; padding: 10px 12px; border: 0; border-radius: 10px; cursor: pointer; }
 .status { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
 .muted { color: #666; font-size: 12px; }
+
+
+/* --- Busy overlay --- */
+
+.busyOverlay{
+  position:fixed;
+  inset:0;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background: rgba(0,0,0,.45);
+  z-index: 9999;
+}
+.busyOverlay.show{ display:flex; }
+
+.busyCard{
+  width: 320px;
+  border-radius: 16px;
+  background: rgba(18,18,21,.92);
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 18px 60px rgba(0,0,0,.55);
+  padding: 18px 16px 14px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap: 12px;
+}
+
+.ringWrap{ width: 120px; height: 120px; position:relative; display:flex; align-items:center; justify-content:center; }
+.ring{
+  width: 120px; height: 120px;
+  border-radius: 999px;
+  background: conic-gradient(from 180deg, rgba(133,205,219,.0), rgba(133,205,219,.9), rgba(133,205,219,.0));
+  -webkit-mask: radial-gradient(farthest-side, transparent 62%, #000 63%);
+          mask: radial-gradient(farthest-side, transparent 62%, #000 63%);
+  animation: lucySpin 3.2s linear infinite;
+  filter: blur(.0px);
+  opacity: .95;
+}
+@keyframes lucySpin { to { transform: rotate(360deg); } }
+
+.overlayPct{
+  position:absolute;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.busyText{ text-align:center; }
+.busyTitle{ font-size: 13px; font-weight: 700; }
+.busyHint{ font-size: 12px; opacity: .75; margin-top: 2px; }
+
+.overlayCancel{ width: 100%; height: 36px; }

@@ -17,10 +17,34 @@ function throwIfCancelled() {
   }
 }
 
+function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
+  if ((node as any).visible === false) return;
+  if (node.type === "FRAME") {
+    out.push(node as FrameNode);
+    return;
+  }
+  if ("children" in node) {
+    for (const c of node.children as readonly SceneNode[]) {
+      collectFramesDeep(c as SceneNode, out);
+    }
+  }
+}
+
 function getSelectedFrames(): FrameNode[] {
   const sel = figma.currentPage.selection;
   if (!sel || sel.length === 0) return [];
-  return sel.filter((n) => n.type === "FRAME") as FrameNode[];
+
+  const out: FrameNode[] = [];
+  for (const n of sel as readonly SceneNode[]) {
+    if ((n as any).visible === false) continue;
+    if (n.type === "FRAME") out.push(n as FrameNode);
+    else if (n.type === "SECTION") collectFramesDeep(n as unknown as SceneNode, out);
+  }
+
+  // Deduplicate
+  const map = new Map<string, FrameNode>();
+  for (const f of out) map.set(f.id, f);
+  return Array.from(map.values());
 }
 function sendSelectionFrames() {
   const frames = getSelectedFrames();
@@ -29,6 +53,11 @@ function sendSelectionFrames() {
     frames: frames.map((f) => ({ id: f.id, name: f.name, width: f.width, height: f.height }))
   });
 }
+
+// Auto-update selection without manual refresh
+figma.on("selectionchange", () => {
+  try { sendSelectionFrames(); } catch { /* ignore */ }
+});
 
 function clamp(n: number, a: number, b: number) { return Math.max(a, Math.min(b, n)); }
 function rgbToHex(rgb: RGB): string {

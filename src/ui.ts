@@ -1,19 +1,28 @@
-// src/ui.ts (v0.5.1-dev) — PPT builder: smart BG + masked images + cancel UI
+// src/ui.ts (v0.5.4-dev) — Font handling improvements + bgShape support + V051 handler
 import PptxGenJS from "pptxgenjs";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
-const cancelBtn = document.getElementById("cancel") as HTMLButtonElement;
+const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
 const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
 
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const barEl = document.getElementById("bar") as HTMLDivElement;
-const pctEl = document.getElementById("pct") as HTMLDivElement;
+// main progress percent is intentionally hidden (we show a bar + label instead)
+const pctEl = document.getElementById("pct") as HTMLDivElement | null;
 const progTextEl = document.getElementById("progText") as HTMLDivElement;
 const tinyHintEl = document.getElementById("tinyHint") as HTMLDivElement;
 
 const listEl = document.getElementById("list") as HTMLDivElement;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
 const footerEl = document.getElementById("footer") as HTMLDivElement;
+
+// Busy overlay elements
+const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
+// Overlay uses a ring indicator (no numeric percent)
+const ringEl = document.querySelector(".ring") as HTMLDivElement | null;
+const overlayHintEl = document.getElementById("overlayHint") as HTMLDivElement | null;
+const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonElement | null;
+
 
 const ctaTextEl = exportBtn.querySelector(".ctaText") as HTMLSpanElement | null;
 
@@ -30,7 +39,6 @@ const TEXT_BOX_H_PAD_PX = 2;
 const TEXT_NUDGE_X_PX = -2;
 const TEXT_HEIGHT_PAD_PX = 4;
 
-// Baseline offsets
 function getTextNudgeYPx(fontSizePx: number): number {
   if (fontSizePx >= 28) return 1;
   if (fontSizePx >= 16) return 2;
@@ -53,27 +61,45 @@ function figmaRadiusPxToRectRadiusRatio(radiusPx: number | undefined, wPx: numbe
   return clamp(r / halfMin, 0, 1);
 }
 
+/**
+ * FONT STRATEGY
+ * - Default: keep original font family from Figma (best match on your machine).
+ * - Optional: client-safe mapping (Calibri/Arial/etc.) for environments without custom fonts.
+ */
+const CLIENT_SAFE_FONTS = false; // <- switch to true if you want "safe for any client" output
+
+function normalizeFontName(name: string | undefined): string {
+  return (name || "").trim().replace(/\s+/g, " ");
+}
+
+// Conservative mapping for client-safe mode (feel free to tune)
+function mapToClientSafeFont(figmaFamily: string): string {
+  const f = figmaFamily.toLowerCase();
+
+  if (f.includes("sf pro") || f.includes("san francisco")) return "Arial";
+  if (f.includes("helvetica")) return "Helvetica";
+  if (f.includes("inter")) return "Calibri"; // common office default
+  if (f.includes("graphik")) return "Arial";
+  if (f.includes("roboto")) return "Calibri";
+  if (f.includes("manrope")) return "Calibri";
+  if (f.includes("montserrat")) return "Calibri";
+  if (f.includes("poppins")) return "Calibri";
+
+  if (f.includes("calibri")) return "Calibri";
+  if (f.includes("arial")) return "Arial";
+  if (f.includes("times")) return "Times New Roman";
+  if (f.includes("georgia")) return "Georgia";
+  if (f.includes("verdana")) return "Verdana";
+  if (f.includes("tahoma")) return "Tahoma";
+
+  return "Calibri";
+}
+
+// Default mode: preserve original font name; fallback only if empty.
 function mapFontFamily(figmaFamily: string | undefined): string {
-  const f = (figmaFamily || "").trim();
-  const key = f.toLowerCase();
-
-  if (key.includes("inter")) return "Calibri";
-  if (key.includes("sf pro") || key.includes("san francisco")) return "Arial";
-  if (key.includes("helvetica")) return "Helvetica";
-  if (key.includes("graphik")) return "Arial";
-  if (key.includes("roboto")) return "Calibri";
-  if (key.includes("manrope")) return "Calibri";
-  if (key.includes("montserrat")) return "Calibri";
-  if (key.includes("poppins")) return "Calibri";
-
-  if (key.includes("calibri")) return "Calibri";
-  if (key.includes("arial")) return "Arial";
-  if (key.includes("times")) return "Times New Roman";
-  if (key.includes("georgia")) return "Georgia";
-  if (key.includes("verdana")) return "Verdana";
-  if (key.includes("tahoma")) return "Tahoma";
-
-  return f || "Calibri";
+  const clean = normalizeFontName(figmaFamily);
+  if (!clean) return "Calibri";
+  return CLIENT_SAFE_FONTS ? mapToClientSafeFont(clean) : clean;
 }
 
 function uint8ToBase64(u8: Uint8Array): string {
@@ -94,7 +120,9 @@ function setProgress(phase: string, current: number, total: number, label?: stri
   const p = Math.round((c / t) * 100);
 
   barEl.style.width = `${p}%`;
-  pctEl.textContent = `${p}%`;
+  if (pctEl) pctEl.textContent = "";
+  if (isBusy && ringEl) ringEl.style.setProperty("--p", String(p));
+  if (isBusy && overlayHintEl && phase) overlayHintEl.textContent = String(phase);
   progTextEl.textContent = label ? label : `${c}/${t}`;
   if (tinyHintEl) tinyHintEl.textContent = phase ? String(phase) : "";
   if (text) setStatus(text);
@@ -102,8 +130,23 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 
 let isBusy = false;
 
+
+function showBusyOverlay(show: boolean) {
+  if (!busyOverlayEl) return;
+  if (show) {
+    busyOverlayEl.classList.add("show");
+    busyOverlayEl.setAttribute("aria-hidden", "false");
+    if (ringEl) ringEl.style.setProperty("--p", "0");
+  } else {
+    busyOverlayEl.classList.remove("show");
+    busyOverlayEl.setAttribute("aria-hidden", "true");
+  }
+}
+
 function setBusy(next: boolean, ctaLabel?: string) {
   isBusy = next;
+  // show overlay only during export
+  showBusyOverlay(next);
 
   exportBtn.disabled = next;
   refreshBtn.disabled = next;
@@ -136,7 +179,7 @@ function renderList(frames: FrameInfo[]) {
   if (!frames.length) {
     const empty = document.createElement("div");
     empty.className = "muted";
-    empty.textContent = "No frames selected. Select frames in Figma and click refresh.";
+    empty.textContent = "No frames selected. Select one or more frames (or a section) in Figma.";
     listEl.appendChild(empty);
     exportBtn.disabled = true;
     return;
@@ -229,11 +272,18 @@ exportBtn.onclick = () => {
   parent.postMessage({ pluginMessage: { type: "EXPORT_PPTX_ORDERED", frameIds: ids } }, "*");
 };
 
-cancelBtn.onclick = () => {
+cancelBtn?.addEventListener('click', () => {
   if (!isBusy) return;
   setProgress("cancel", 0, 1, "Cancelling…", "Stopping export…");
   parent.postMessage({ pluginMessage: { type: "CANCEL_EXPORT" } }, "*");
-};
+});
+
+// Overlay Cancel (only in overlay)
+overlayCancelBtn?.addEventListener('click', () => {
+  if (!isBusy) return;
+  setProgress('cancel', 0, 1, 'Cancelling…', 'Stopping export…');
+  parent.postMessage({ pluginMessage: { type: 'CANCEL_EXPORT' } }, '*');
+});
 
 // Ask selection on open
 parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");
@@ -244,8 +294,8 @@ type ExportSlide = {
   width: number;
   height: number;
   scale: number;
-  bgPngBytes: number[];
-  bgShape?: { fill: string; opacity: number } | null;
+  bgPngBytes: number[]; // empty if bgShape is used
+  bgShape?: { fill: string; opacity: number } | null; // optional Smart BG
   items: Array<any>;
 };
 
@@ -258,6 +308,12 @@ function buildTransformForSlide(targetWpx: number, targetHpx: number, srcWpx: nu
   return { s, ox, oy, outW, outH };
 }
 
+function formatFontsUsed(fonts: Set<string>) {
+  const arr = Array.from(fonts).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  if (!arr.length) return "";
+  return `Fonts used: ${arr.join(", ")}${CLIENT_SAFE_FONTS ? " (client-safe mapping ON)" : ""}`;
+}
+
 async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   const targetWpx = Math.max(...slides.map((s) => s.width));
   const targetHpx = Math.max(...slides.map((s) => s.height));
@@ -266,6 +322,8 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   pptx.defineLayout({ name: "FIGMA_BATCH", width: pxToIn(targetWpx), height: pxToIn(targetHpx) });
   pptx.layout = "FIGMA_BATCH";
 
+  const fontsUsed = new Set<string>();
+
   for (let si = 0; si < slides.length; si++) {
     const sd = slides[si];
     setProgress("pptx", si, slides.length, `Building slide ${si + 1}/${slides.length}`, sd.name);
@@ -273,30 +331,30 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
     const trf = buildTransformForSlide(targetWpx, targetHpx, sd.width, sd.height);
     const slide = pptx.addSlide();
 
-    // 1) Smart background (shape)
-    if (sd.bgShape && sd.bgShape.fill) {
-      const tPct = opacityToTransparencyPct(sd.bgShape.opacity ?? 1);
-      slide.addShape(pptx.ShapeType.rect, {
-        x: 0,
-        y: 0,
-        w: pxToIn(targetWpx),
-        h: pxToIn(targetHpx),
-        fill: { color: sd.bgShape.fill, transparency: tPct },
-        line: { color: sd.bgShape.fill, transparency: 100, width: 0 }
-      });
-    }
+    // Background: either PNG OR Smart BG shape
+    const hasBgPng = Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0;
+    const hasBgShape = !!sd.bgShape && !!sd.bgShape.fill;
 
-    // 2) Background PNG fallback
-    if (sd.bgPngBytes && sd.bgPngBytes.length > 0) {
+    if (hasBgPng) {
       const bgBytes = new Uint8Array(sd.bgPngBytes);
       const bgB64 = uint8ToBase64(bgBytes);
-
       slide.addImage({
         data: "data:image/png;base64," + bgB64,
         x: pxToIn(trf.ox),
         y: pxToIn(trf.oy),
         w: pxToIn(trf.outW),
         h: pxToIn(trf.outH)
+      });
+    } else if (hasBgShape) {
+      const op = typeof sd.bgShape!.opacity === "number" ? sd.bgShape!.opacity : 1;
+      const tPct = opacityToTransparencyPct(op);
+      slide.addShape(pptx.ShapeType.rect, {
+        x: 0,
+        y: 0,
+        w: pxToIn(targetWpx),
+        h: pxToIn(targetHpx),
+        fill: { color: String(sd.bgShape!.fill), transparency: tPct },
+        line: { color: String(sd.bgShape!.fill), transparency: 100 }
       });
     }
 
@@ -307,27 +365,6 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
       const sy = (v: number) => trf.oy + v * trf.s;
       const sw = (v: number) => v * trf.s;
       const sh = (v: number) => v * trf.s;
-
-      if (it.kind === "maskedImage") {
-        const bytes = new Uint8Array(it.pngBytes);
-        const b64 = uint8ToBase64(bytes);
-
-        const crop = it.crop || { x: 0, y: 0, w: 1, h: 1 };
-        slide.addImage({
-          data: "data:image/png;base64," + b64,
-          x: pxToIn(sx(it.x)),
-          y: pxToIn(sy(it.y)),
-          w: pxToIn(sw(it.w)),
-          h: pxToIn(sh(it.h)),
-          crop: {
-            x: clamp(Number(crop.x || 0), 0, 1),
-            y: clamp(Number(crop.y || 0), 0, 1),
-            w: clamp(Number(crop.w || 1), 0, 1),
-            h: clamp(Number(crop.h || 1), 0, 1)
-          }
-        });
-        continue;
-      }
 
       if (it.kind === "raster") {
         const bytes = new Uint8Array(it.pngBytes);
@@ -393,23 +430,26 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         const baseFsPx = Number(it.fontSize || 14);
         const effFsPx = baseFsPx * trf.s;
 
-        const xNudge = -2 * trf.s;
+        const xNudge = TEXT_NUDGE_X_PX * trf.s;
         const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
 
         const xPx = sx((it.x ?? 0) + xNudge);
         const yPx = sy((it.y ?? 0) + yNudge);
 
-        const wPad = (10 + 2) * trf.s;
-        const hPad = 2 * trf.s;
+        const wPad = TEXT_BOX_W_PAD_PX * trf.s;
+        const hPad = TEXT_BOX_H_PAD_PX * trf.s;
 
         const wPx = sw((it.w ?? 10) + wPad);
-        const hPx = sh((it.h ?? 10) + 4 + hPad);
+        const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + hPad);
 
         const opacity = typeof it.opacity === "number" ? it.opacity : 1;
         const tPct = opacityToTransparencyPct(opacity);
 
         const lhPx = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s : null;
         const lineSpacingPt = lhPx ? Math.max(1, Math.round(pxToPt(lhPx))) : undefined;
+
+        const fontFace = mapFontFamily(it.fontFamily);
+        fontsUsed.add(fontFace);
 
         slide.addText(String(it.text), {
           x: pxToIn(xPx),
@@ -418,7 +458,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
           h: pxToIn(hPx),
           margin: 0,
           inset: 0,
-          fontFace: mapFontFamily(it.fontFamily),
+          fontFace,
           fontSize: Math.max(1, Math.round(pxToPt(effFsPx))),
           bold: !!it.bold,
           italic: !!it.italic,
@@ -444,6 +484,10 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   a.click();
   URL.revokeObjectURL(url);
 
+  // Show fonts list as a useful hint for matching on client machines
+  const fontsHint = formatFontsUsed(fontsUsed);
+  if (tinyHintEl && fontsHint) tinyHintEl.textContent = fontsHint;
+
   setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
 }
 
@@ -454,8 +498,10 @@ window.onmessage = async (event) => {
   if (msg.type === "STATUS") { setStatus(msg.text); return; }
 
   if (msg.type === "ERROR") {
+    showBusyOverlay(false);
     setStatus("Error:\n" + msg.text);
     setBusy(false, "Export PPTX");
+    showBusyOverlay(false);
     return;
   }
 
@@ -465,6 +511,7 @@ window.onmessage = async (event) => {
     setStatus(currentFrames.length ? `Selected frames: ${currentFrames.length}` : "Select one or more frames.");
     setProgress("idle", 0, 1, "Idle");
     setBusy(false, "Export PPTX");
+    showBusyOverlay(false);
     return;
   }
 
@@ -474,19 +521,40 @@ window.onmessage = async (event) => {
   }
 
   if (msg.type === "CANCELLED") {
+    showBusyOverlay(false);
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
+    showBusyOverlay(false);
     return;
   }
 
+  // ✅ New protocol (Smart BG + items) — matches current code.ts
   if (msg.type === "BATCH_BG_AND_ITEMS_V051") {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
-      setBusy(false, "Export PPTX");
-      return;
+return;
     }
-    await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
-    setBusy(false, "Export PPTX");
-  }
+    try {
+      await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+    } finally {
+      showBusyOverlay(false);
+      setBusy(false, "Export PPTX");
+    }
+}
+
+  // legacy handler (keep if you still receive it somewhere)
+  if (msg.type === "BATCH_BG_AND_ITEMS_V040") {
+    const slides: ExportSlide[] = msg.slides || [];
+    if (!slides.length) {
+      setStatus("Error: empty batch.");
+return;
+    }
+    try {
+      await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+    } finally {
+      showBusyOverlay(false);
+      setBusy(false, "Export PPTX");
+    }
+}
 };
