@@ -83,7 +83,7 @@ type ExportText = {
   text: string; fontFamily: string; fontSize: number;
   lineHeightPx?: number | null; color: string;
   align: "left" | "center" | "right" | "justify";
-  opacity: number; bold: boolean; italic: boolean;
+  opacity: number; bold: boolean; italic: boolean; uppercase: boolean;
 };
 
 type ExportShape =
@@ -159,6 +159,18 @@ function getFirstCharFontStyleFlags(tn: TextNode): { bold: boolean; italic: bool
       italic: style.includes("italic") || style.includes("oblique")
     };
   } catch { return { bold: false, italic: false }; }
+}
+function getIsUppercase(tn: TextNode): boolean {
+  try {
+    const len = tn.characters?.length ?? 0;
+    if (len === 0) return false;
+    const tc = tn.getRangeTextCase(0, 1) as TextCase;
+    return tc === "UPPER";
+  } catch {
+    const tc = (tn as any).textCase as TextCase | PluginAPI["mixed"] | undefined;
+    if (!tc || tc === figma.mixed) return false;
+    return tc === "UPPER";
+  }
 }
 function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   try {
@@ -544,13 +556,59 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     return true;
   }
 
-  async function walk(node: SceneNode) {
+  function addTextItem(tn: TextNode) {
+    const r = rectRelativeToFrame(tn, frame);
+    const flags = getFirstCharFontStyleFlags(tn);
+    const fs = getFirstCharFontSize(tn);
+
+    z += 1;
+    zById.set(tn.id, z);
+
+    items.push({
+      kind: "text",
+      z,
+      id: tn.id,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      text: tn.characters ?? "",
+      fontFamily: getFirstCharFontFamily(tn),
+      fontSize: fs,
+      lineHeightPx: getTextLineHeightPx(tn, fs),
+      color: getFirstCharFillHex(tn),
+      align: alignMap(tn.textAlignHorizontal),
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: flags.bold,
+      italic: flags.italic,
+      uppercase: getIsUppercase(tn)
+    });
+
+    markHide(tn);
+  }
+
+  async function walk(node: SceneNode, textOnly = false) {
     if (!("visible" in node) || (node as any).visible === false) return;
     if (cancelRequested) return;
 
+    if (textOnly && node.type !== "TEXT") {
+      if ("children" in node) {
+        for (const ch of node.children as readonly SceneNode[]) {
+          await walk(ch as SceneNode, true);
+          if (cancelRequested) return;
+        }
+      }
+      return;
+    }
+
     if (node.id !== frame.id && isContainer(node)) {
       const handledMask = await tryExtractMaskPairsInContainer(node);
-      if (handledMask) return;
+      if (handledMask) {
+        if ("children" in node) {
+          for (const ch of node.children as readonly SceneNode[]) {
+            await walk(ch as SceneNode, true);
+            if (cancelRequested) return;
+          }
+        }
+        return;
+      }
     }
 
     if (node.id !== frame.id) {
@@ -575,6 +633,12 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
           });
 
           markHide(node);
+          if ("children" in node) {
+            for (const ch of node.children as readonly SceneNode[]) {
+              await walk(ch as SceneNode, true);
+              if (cancelRequested) return;
+            }
+          }
           return;
         }
 
@@ -646,27 +710,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
       // 3) Text
       if (node.type === "TEXT") {
         const tn = node as TextNode;
-        const r = rectRelativeToFrame(tn, frame);
-        const flags = getFirstCharFontStyleFlags(tn);
-        const fs = getFirstCharFontSize(tn);
-
-        items.push({
-          kind: "text",
-          z,
-          id: tn.id,
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          text: tn.characters ?? "",
-          fontFamily: getFirstCharFontFamily(tn),
-          fontSize: fs,
-          lineHeightPx: getTextLineHeightPx(tn, fs),
-          color: getFirstCharFillHex(tn),
-          align: alignMap(tn.textAlignHorizontal),
-          opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-          bold: flags.bold,
-          italic: flags.italic
-        });
-
-        markHide(tn);
+        addTextItem(tn);
         return;
       }
 

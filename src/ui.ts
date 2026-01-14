@@ -466,7 +466,10 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         const fontFace = mapFontFamily(it.fontFamily);
         fontsUsed.add(fontFace);
 
-        slide.addText(String(it.text), {
+        const rawText = String(it.text);
+        const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
+
+        slide.addText(finalText, {
           x: pxToIn(xPx),
           y: pxToIn(yPx),
           w: pxToIn(wPx),
