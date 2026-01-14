@@ -30,6 +30,34 @@ function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
   }
 }
 
+type FrameSortMode = "layout" | "name";
+const FRAME_SORT_MODE: FrameSortMode = "layout";
+
+function getFrameSortKey(frame: FrameNode): { x: number; y: number } {
+  const pos = getAbsXY(frame);
+  return { x: pos.x, y: pos.y };
+}
+
+function sortFrames(frames: FrameNode[]): FrameNode[] {
+  if (FRAME_SORT_MODE === "name") {
+    return [...frames].sort((a, b) => {
+      const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+      if (byName !== 0) return byName;
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  return [...frames].sort((a, b) => {
+    const pa = getFrameSortKey(a);
+    const pb = getFrameSortKey(b);
+    if (pa.y !== pb.y) return pa.y - pb.y;
+    if (pa.x !== pb.x) return pa.x - pb.x;
+    const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    if (byName !== 0) return byName;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function getSelectedFrames(): FrameNode[] {
   const sel = figma.currentPage.selection;
   if (!sel || sel.length === 0) return [];
@@ -44,19 +72,27 @@ function getSelectedFrames(): FrameNode[] {
   // Deduplicate
   const map = new Map<string, FrameNode>();
   for (const f of out) map.set(f.id, f);
-  return Array.from(map.values());
+  return sortFrames(Array.from(map.values()));
 }
-function sendSelectionFrames() {
+async function sendSelectionFrames() {
   const frames = getSelectedFrames();
+  const enriched = await Promise.all(frames.map(async (f) => {
+    try {
+      const bytes = await f.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 96 } });
+      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: Array.from(bytes) };
+    } catch {
+      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: null };
+    }
+  }));
   figma.ui.postMessage({
     type: "SELECTION_FRAMES",
-    frames: frames.map((f) => ({ id: f.id, name: f.name, width: f.width, height: f.height }))
+    frames: enriched
   });
 }
 
 // Auto-update selection without manual refresh
 figma.on("selectionchange", () => {
-  try { sendSelectionFrames(); } catch { /* ignore */ }
+  try { void sendSelectionFrames(); } catch { /* ignore */ }
 });
 
 function clamp(n: number, a: number, b: number) { return Math.max(a, Math.min(b, n)); }

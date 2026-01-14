@@ -179,7 +179,7 @@ function setBusy(next: boolean, ctaLabel?: string) {
   }
 }
 
-type FrameInfo = { id: string; name: string; width: number; height: number };
+type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
 let currentFrames: FrameInfo[] = [];
 
 function getOrderedFrameIdsFromDOM(): string[] {
@@ -210,6 +210,17 @@ function renderList(frames: FrameInfo[]) {
     handle.className = "handle";
     handle.textContent = "⋮⋮";
 
+    const thumbWrap = document.createElement("div");
+    thumbWrap.className = "thumb";
+    if (f.thumbBytes && f.thumbBytes.length > 0) {
+      const img = document.createElement("img");
+      img.alt = f.name;
+      img.src = `data:image/png;base64,${uint8ToBase64(new Uint8Array(f.thumbBytes))}`;
+      thumbWrap.appendChild(img);
+    } else {
+      thumbWrap.classList.add("thumbEmpty");
+    }
+
     const center = document.createElement("div");
     const name = document.createElement("div");
     name.className = "name";
@@ -223,6 +234,7 @@ function renderList(frames: FrameInfo[]) {
     center.appendChild(meta);
 
     row.appendChild(handle);
+    row.appendChild(thumbWrap);
     row.appendChild(center);
     row.appendChild(document.createElement("div"));
 
