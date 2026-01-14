@@ -7,8 +7,6 @@ const UI_HIGHLIGHT = "Section export";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
-const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
-
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const barEl = document.getElementById("bar") as HTMLDivElement;
 // main progress percent is intentionally hidden (we show a bar + label instead)
@@ -19,6 +17,9 @@ const stateDotEl = document.getElementById("stateDot") as HTMLDivElement;
 const listEl = document.getElementById("list") as HTMLDivElement;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
 const footerEl = document.getElementById("footer") as HTMLDivElement;
+
+const formatSelect = document.getElementById("formatSelect") as HTMLSelectElement | null;
+const qualitySelect = document.getElementById("qualitySelect") as HTMLSelectElement | null;
 
 const versionEl = document.getElementById("version") as HTMLDivElement | null;
 
@@ -143,6 +144,7 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 }
 
 let isBusy = false;
+let uiCancelRequested = false;
 
 function showBusyOverlay(show: boolean) {
   if (!busyOverlayEl) return;
@@ -164,7 +166,6 @@ function setBusy(next: boolean, ctaLabel?: string) {
   setState(next ? "processing" : "idle");
 
   exportBtn.disabled = next;
-  refreshBtn.disabled = next;
 
   if (ctaTextEl) ctaTextEl.textContent = ctaLabel || (next ? "Exporting…" : "Export PPTX");
   if (next) exportBtn.classList.add("isLoading");
@@ -181,7 +182,7 @@ function setBusy(next: boolean, ctaLabel?: string) {
   }
 }
 
-type FrameInfo = { id: string; name: string; width: number; height: number };
+type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
 let currentFrames: FrameInfo[] = [];
 
 function getOrderedFrameIdsFromDOM(): string[] {
@@ -212,6 +213,17 @@ function renderList(frames: FrameInfo[]) {
     handle.className = "handle";
     handle.textContent = "⋮⋮";
 
+    const thumbWrap = document.createElement("div");
+    thumbWrap.className = "thumb";
+    if (f.thumbBytes && f.thumbBytes.length > 0) {
+      const img = document.createElement("img");
+      img.alt = f.name;
+      img.src = `data:image/png;base64,${uint8ToBase64(new Uint8Array(f.thumbBytes))}`;
+      thumbWrap.appendChild(img);
+    } else {
+      thumbWrap.classList.add("thumbEmpty");
+    }
+
     const center = document.createElement("div");
     const name = document.createElement("div");
     name.className = "name";
@@ -225,6 +237,7 @@ function renderList(frames: FrameInfo[]) {
     center.appendChild(meta);
 
     row.appendChild(handle);
+    row.appendChild(thumbWrap);
     row.appendChild(center);
     row.appendChild(document.createElement("div"));
 
@@ -268,11 +281,6 @@ function renderList(frames: FrameInfo[]) {
   }
 }
 
-refreshBtn.onclick = () => {
-  if (isBusy) return;
-  parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");
-};
-
 exportBtn.onclick = () => {
   if (isBusy) return;
 
@@ -282,13 +290,22 @@ exportBtn.onclick = () => {
     return;
   }
 
+  uiCancelRequested = false;
   setBusy(true, "Exporting…");
   setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
-  parent.postMessage({ pluginMessage: { type: "EXPORT_PPTX_ORDERED", frameIds: ids } }, "*");
+  parent.postMessage({
+    pluginMessage: {
+      type: "EXPORT_PPTX_ORDERED",
+      frameIds: ids,
+      format: formatSelect?.value ?? "pptx",
+      quality: qualitySelect?.value ?? "best"
+    }
+  }, "*");
 };
 
 cancelBtn?.addEventListener('click', () => {
   if (!isBusy) return;
+  uiCancelRequested = true;
   setProgress("cancel", 0, 1, "Cancelling…", "Stopping export…");
   parent.postMessage({ pluginMessage: { type: "CANCEL_EXPORT" } }, "*");
 });
@@ -296,6 +313,7 @@ cancelBtn?.addEventListener('click', () => {
 // Overlay Cancel (only in overlay)
 overlayCancelBtn?.addEventListener('click', () => {
   if (!isBusy) return;
+  uiCancelRequested = true;
   setProgress('cancel', 0, 1, 'Cancelling…', 'Stopping export…');
   parent.postMessage({ pluginMessage: { type: 'CANCEL_EXPORT' } }, '*');
 });
@@ -330,6 +348,7 @@ function formatFontsUsed(fonts: Set<string>) {
 }
 
 async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
   const targetWpx = Math.max(...slides.map((s) => s.width));
   const targetHpx = Math.max(...slides.map((s) => s.height));
 
@@ -340,6 +359,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   const fontsUsed = new Set<string>();
 
   for (let si = 0; si < slides.length; si++) {
+    if (uiCancelRequested) throw new Error("CANCELLED_UI");
     const sd = slides[si];
     setProgress("pptx", si, slides.length, `Building slide ${si + 1}/${slides.length}`, sd.name);
 
@@ -376,6 +396,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
     const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
     for (const it of items) {
+      if (uiCancelRequested) throw new Error("CANCELLED_UI");
       const sx = (v: number) => trf.ox + v * trf.s;
       const sy = (v: number) => trf.oy + v * trf.s;
       const sw = (v: number) => v * trf.s;
@@ -466,7 +487,10 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         const fontFace = mapFontFamily(it.fontFamily);
         fontsUsed.add(fontFace);
 
-        slide.addText(String(it.text), {
+        const rawText = String(it.text);
+        const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
+
+        slide.addText(finalText, {
           x: pxToIn(xPx),
           y: pxToIn(yPx),
           w: pxToIn(wPx),
@@ -488,6 +512,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   }
 
   setProgress("pptx", slides.length, slides.length, "Writing file…", "Finalizing PPTX…");
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
   const arrayBuffer = await pptx.write("arraybuffer");
   const outBytes = new Uint8Array(arrayBuffer as ArrayBuffer);
 
@@ -502,6 +527,288 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   // Show fonts list as a useful hint for matching on client machines
   const fontsHint = formatFontsUsed(fontsUsed);
   if (tinyHintEl && fontsHint) tinyHintEl.textContent = fontsHint;
+
+  setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
+  setState("success");
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16) || 0;
+  const g = parseInt(clean.slice(2, 4), 16) || 0;
+  const b = parseInt(clean.slice(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function createCanvas(width: number, height: number): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  return canvas;
+}
+
+async function loadImageFromBytes(bytes: number[]): Promise<HTMLImageElement> {
+  const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Image load failed"));
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function jpgQualityForMode(mode: string): number {
+  if (mode === "low") return 0.6;
+  if (mode === "medium") return 0.8;
+  return 0.92;
+}
+
+function buildPdfBytes(pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeight: number; pageWidth: number; pageHeight: number }[]): Uint8Array {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  let offset = 0;
+  const xref: number[] = [];
+
+  function pushString(s: string) {
+    const bytes = encoder.encode(s);
+    chunks.push(bytes);
+    offset += bytes.length;
+  }
+
+  function pushBytes(b: Uint8Array) {
+    chunks.push(b);
+    offset += b.length;
+  }
+
+  function addObject(content: string | Uint8Array, streamBytes?: Uint8Array) {
+    xref.push(offset);
+    const objNum = xref.length;
+    pushString(`${objNum} 0 obj\n`);
+    if (streamBytes) {
+      pushString(String(content));
+      pushString("\nstream\n");
+      pushBytes(streamBytes);
+      pushString("\nendstream\nendobj\n");
+    } else {
+      pushString(String(content));
+      pushString("\nendobj\n");
+    }
+    return objNum;
+  }
+
+  pushString("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+
+  const pageRefs: number[] = [];
+
+  for (const page of pages) {
+    const imgObj = addObject(
+      `<< /Type /XObject /Subtype /Image /Width ${page.imgWidth} /Height ${page.imgHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpgBytes.length} >>`,
+      page.jpgBytes
+    );
+    const contentStream = `q ${page.pageWidth} 0 0 ${page.pageHeight} 0 0 cm /Im${imgObj} Do Q`;
+    const contentObj = addObject(`<< /Length ${contentStream.length} >>`, encoder.encode(contentStream));
+    const pageObj = addObject(
+      `<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im${imgObj} ${imgObj} 0 R >> >> /MediaBox [0 0 ${page.pageWidth} ${page.pageHeight}] /Contents ${contentObj} 0 R >>`
+    );
+    pageRefs.push(pageObj);
+  }
+
+  const pagesObj = addObject(`<< /Type /Pages /Kids [${pageRefs.map((r) => `${r} 0 R`).join(" ")}] /Count ${pageRefs.length} >>`);
+  const catalogObj = addObject(`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`);
+
+  const xrefOffset = offset;
+  pushString(`xref\n0 ${xref.length + 1}\n`);
+  pushString("0000000000 65535 f \n");
+  for (const pos of xref) {
+    pushString(`${String(pos).padStart(10, "0")} 00000 n \n`);
+  }
+  pushString(`trailer\n<< /Size ${xref.length + 1} /Root ${catalogObj} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+  const out = new Uint8Array(totalLength);
+  let cursor = 0;
+  for (const c of chunks) {
+    out.set(c, cursor);
+    cursor += c.length;
+  }
+  return out;
+}
+
+async function buildPdfFromSlides(filename: string, slides: ExportSlide[], qualityMode: string) {
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
+  const targetWpx = Math.max(...slides.map((s) => s.width));
+  const targetHpx = Math.max(...slides.map((s) => s.height));
+  const jpgQuality = jpgQualityForMode(qualityMode);
+  const pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeight: number; pageWidth: number; pageHeight: number }[] = [];
+
+  for (let si = 0; si < slides.length; si++) {
+    if (uiCancelRequested) throw new Error("CANCELLED_UI");
+    const sd = slides[si];
+    setProgress("pdf", si, slides.length, `Building page ${si + 1}/${slides.length}`, sd.name);
+
+    const trf = buildTransformForSlide(targetWpx, targetHpx, sd.width, sd.height);
+    const canvas = createCanvas(targetWpx, targetHpx);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unavailable");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0) {
+      const img = await loadImageFromBytes(sd.bgPngBytes);
+      ctx.drawImage(img, trf.ox, trf.oy, trf.outW, trf.outH);
+    } else if (sd.bgShape?.fill) {
+      ctx.fillStyle = hexToRgba(sd.bgShape.fill, typeof sd.bgShape.opacity === "number" ? sd.bgShape.opacity : 1);
+      ctx.fillRect(0, 0, targetWpx, targetHpx);
+    }
+
+    const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+    for (const it of items) {
+      if (uiCancelRequested) throw new Error("CANCELLED_UI");
+      const sx = (v: number) => trf.ox + v * trf.s;
+      const sy = (v: number) => trf.oy + v * trf.s;
+      const sw = (v: number) => v * trf.s;
+      const sh = (v: number) => v * trf.s;
+
+      if (it.kind === "raster") {
+        const img = await loadImageFromBytes(it.pngBytes);
+        ctx.drawImage(img, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
+        continue;
+      }
+
+      if (it.kind === "maskedImage") {
+        const img = await loadImageFromBytes(it.pngBytes);
+        const srcW = img.width;
+        const srcH = img.height;
+        const sx0 = it.crop.x * srcW;
+        const sy0 = it.crop.y * srcH;
+        const sw0 = it.crop.w * srcW;
+        const sh0 = it.crop.h * srcH;
+        ctx.drawImage(img, sx0, sy0, sw0, sh0, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
+        continue;
+      }
+
+      if (it.kind === "shape") {
+        const x = sx(it.x ?? 0);
+        const y = sy(it.y ?? 0);
+        const w = sw(it.w ?? 10);
+        const h = sh(it.h ?? 10);
+        const opacity = typeof it.opacity === "number" ? it.opacity : 1;
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+
+        if (it.shape === "rect") {
+          const radius = typeof it.radius === "number" ? it.radius * trf.s : 0;
+          drawRoundRect(ctx, x, y, w, h, radius);
+          if (it.fill) {
+            ctx.fillStyle = hexToRgba(it.fill, 1);
+            ctx.fill();
+          }
+          if (it.stroke) {
+            ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
+            ctx.lineWidth = sw(it.stroke.width);
+            ctx.stroke();
+          }
+        } else if (it.shape === "ellipse") {
+          ctx.beginPath();
+          ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+          if (it.fill) {
+            ctx.fillStyle = hexToRgba(it.fill, 1);
+            ctx.fill();
+          }
+          if (it.stroke) {
+            ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
+            ctx.lineWidth = sw(it.stroke.width);
+            ctx.stroke();
+          }
+        } else if (it.shape === "line") {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + w, y + h);
+          ctx.strokeStyle = it.stroke ? hexToRgba(it.stroke.color, 1) : "#000";
+          ctx.lineWidth = it.stroke ? sw(it.stroke.width) : 1;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+        continue;
+      }
+
+      if (it.kind === "text") {
+        if (!it.text || String(it.text).length === 0) continue;
+        const baseFsPx = Number(it.fontSize || 14);
+        const effFsPx = baseFsPx * trf.s;
+        const xNudge = TEXT_NUDGE_X_PX * trf.s;
+        const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
+        const xPx = sx((it.x ?? 0) + xNudge);
+        const yPx = sy((it.y ?? 0) + yNudge);
+        const wPx = sw((it.w ?? 10) + (TEXT_BOX_W_PAD_PX * trf.s));
+        const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + (TEXT_BOX_H_PAD_PX * trf.s));
+        const opacity = typeof it.opacity === "number" ? it.opacity : 1;
+        const fontFace = mapFontFamily(it.fontFamily);
+        const rawText = String(it.text);
+        const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
+        const lines = finalText.split("\n");
+        const lineHeight = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s : effFsPx * 1.2;
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        ctx.fillStyle = hexToRgba(it.color || "000000", 1);
+        ctx.font = `${it.italic ? "italic " : ""}${it.bold ? "bold " : ""}${Math.max(1, Math.round(effFsPx))}px ${fontFace}`;
+        ctx.textBaseline = "top";
+
+        for (let li = 0; li < lines.length; li++) {
+          const line = lines[li];
+          const metrics = ctx.measureText(line);
+          let drawX = xPx;
+          if (it.align === "center") drawX = xPx + (wPx - metrics.width) / 2;
+          if (it.align === "right") drawX = xPx + wPx - metrics.width;
+          const drawY = yPx + li * lineHeight;
+          if (drawY > yPx + hPx) break;
+          ctx.fillText(line, drawX, drawY);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    const jpgDataUrl = canvas.toDataURL("image/jpeg", jpgQuality);
+    const jpgBytes = Uint8Array.from(atob(jpgDataUrl.split(",")[1]), (c) => c.charCodeAt(0));
+    pages.push({
+      jpgBytes,
+      imgWidth: canvas.width,
+      imgHeight: canvas.height,
+      pageWidth: Math.round(targetWpx * 0.75),
+      pageHeight: Math.round(targetHpx * 0.75)
+    });
+  }
+
+  setProgress("pdf", slides.length, slides.length, "Writing file…", "Finalizing PDF…");
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
+  const pdfBytes = buildPdfBytes(pages);
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "Lucy_batch.pdf";
+  a.click();
+  URL.revokeObjectURL(url);
 
   setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
   setState("success");
@@ -537,6 +844,7 @@ window.onmessage = async (event) => {
   if (msg.type === "CANCELLED") {
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
+    uiCancelRequested = false;
     return;
   }
 
@@ -550,9 +858,21 @@ window.onmessage = async (event) => {
       return;
     }
     try {
-      await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+      if (msg.format === "pdf") {
+        await buildPdfFromSlides((msg.filename ?? "Lucy_batch.pdf").replace(/\.pptx$/i, ".pdf"), slides, msg.quality || "best");
+      } else {
+        await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+      }
+    } catch (err: any) {
+      if (err?.message === "CANCELLED_UI") {
+        setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
+        setState("idle");
+        return;
+      }
+      throw err;
     } finally {
       setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
     }
     return;
   }
@@ -567,9 +887,21 @@ window.onmessage = async (event) => {
       return;
     }
     try {
-      await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+      if (msg.format === "pdf") {
+        await buildPdfFromSlides((msg.filename ?? "Lucy_batch.pdf").replace(/\.pptx$/i, ".pdf"), slides, msg.quality || "best");
+      } else {
+        await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+      }
+    } catch (err: any) {
+      if (err?.message === "CANCELLED_UI") {
+        setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
+        setState("idle");
+        return;
+      }
+      throw err;
     } finally {
       setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
     }
     return;
   }

@@ -30,6 +30,34 @@ function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
   }
 }
 
+type FrameSortMode = "layout" | "name";
+const FRAME_SORT_MODE: FrameSortMode = "layout";
+
+function getFrameSortKey(frame: FrameNode): { x: number; y: number } {
+  const pos = getAbsXY(frame);
+  return { x: pos.x, y: pos.y };
+}
+
+function sortFrames(frames: FrameNode[]): FrameNode[] {
+  if (FRAME_SORT_MODE === "name") {
+    return [...frames].sort((a, b) => {
+      const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+      if (byName !== 0) return byName;
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  return [...frames].sort((a, b) => {
+    const pa = getFrameSortKey(a);
+    const pb = getFrameSortKey(b);
+    if (pa.y !== pb.y) return pa.y - pb.y;
+    if (pa.x !== pb.x) return pa.x - pb.x;
+    const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    if (byName !== 0) return byName;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function getSelectedFrames(): FrameNode[] {
   const sel = figma.currentPage.selection;
   if (!sel || sel.length === 0) return [];
@@ -44,19 +72,27 @@ function getSelectedFrames(): FrameNode[] {
   // Deduplicate
   const map = new Map<string, FrameNode>();
   for (const f of out) map.set(f.id, f);
-  return Array.from(map.values());
+  return sortFrames(Array.from(map.values()));
 }
-function sendSelectionFrames() {
+async function sendSelectionFrames() {
   const frames = getSelectedFrames();
+  const enriched = await Promise.all(frames.map(async (f) => {
+    try {
+      const bytes = await f.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 96 } });
+      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: Array.from(bytes) };
+    } catch {
+      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: null };
+    }
+  }));
   figma.ui.postMessage({
     type: "SELECTION_FRAMES",
-    frames: frames.map((f) => ({ id: f.id, name: f.name, width: f.width, height: f.height }))
+    frames: enriched
   });
 }
 
 // Auto-update selection without manual refresh
 figma.on("selectionchange", () => {
-  try { sendSelectionFrames(); } catch { /* ignore */ }
+  try { void sendSelectionFrames(); } catch { /* ignore */ }
 });
 
 function clamp(n: number, a: number, b: number) { return Math.max(a, Math.min(b, n)); }
@@ -71,6 +107,12 @@ function getAbsXY(node: SceneNode): { x: number; y: number } {
   const t = node.absoluteTransform;
   return { x: t[0][2], y: t[1][2] };
 }
+function getNodeBounds(node: SceneNode): { x: number; y: number; w: number; h: number } {
+  const bb = (node as any).absoluteBoundingBox as { x: number; y: number; width: number; height: number } | undefined;
+  if (bb) return { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
+  const t = node.absoluteTransform;
+  return { x: t[0][2], y: t[1][2], w: node.width, h: node.height };
+}
 function rectRelativeToFrame(node: SceneNode, frame: FrameNode) {
   const n = getAbsXY(node);
   const f = getAbsXY(frame);
@@ -83,7 +125,7 @@ type ExportText = {
   text: string; fontFamily: string; fontSize: number;
   lineHeightPx?: number | null; color: string;
   align: "left" | "center" | "right" | "justify";
-  opacity: number; bold: boolean; italic: boolean;
+  opacity: number; bold: boolean; italic: boolean; uppercase: boolean;
 };
 
 type ExportShape =
@@ -160,6 +202,18 @@ function getFirstCharFontStyleFlags(tn: TextNode): { bold: boolean; italic: bool
     };
   } catch { return { bold: false, italic: false }; }
 }
+function getIsUppercase(tn: TextNode): boolean {
+  try {
+    const len = tn.characters?.length ?? 0;
+    if (len === 0) return false;
+    const tc = tn.getRangeTextCase(0, 1) as TextCase;
+    return tc === "UPPER";
+  } catch {
+    const tc = (tn as any).textCase as TextCase | PluginAPI["mixed"] | undefined;
+    if (!tc || tc === figma.mixed) return false;
+    return tc === "UPPER";
+  }
+}
 function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   try {
     const lh = tn.lineHeight;
@@ -181,6 +235,12 @@ function hasAnyEffects(node: SceneNode): boolean {
   const eff = (node as any).effects;
   if (!eff || eff === figma.mixed) return true;
   return (eff as readonly Effect[]).length > 0;
+}
+function hasBlendMode(node: SceneNode): boolean {
+  if (!("blendMode" in node)) return false;
+  const bm = (node as any).blendMode;
+  if (!bm || bm === figma.mixed) return true;
+  return bm !== "NORMAL";
 }
 function hasImageFill(node: SceneNode): boolean {
   if (!("fills" in node)) return false;
@@ -263,6 +323,23 @@ function containsTextDescendant(node: SceneNode): boolean {
   }
   return false;
 }
+function hasOverflowingDescendant(container: SceneNode): boolean {
+  if (!("children" in container)) return false;
+  const cBounds = getNodeBounds(container);
+  const stack: SceneNode[] = [...(container.children as readonly SceneNode[])];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if ("visible" in n && (n as any).visible === false) continue;
+    const b = getNodeBounds(n);
+    const outLeft = b.x < cBounds.x - 0.5;
+    const outTop = b.y < cBounds.y - 0.5;
+    const outRight = b.x + b.w > cBounds.x + cBounds.w + 0.5;
+    const outBottom = b.y + b.h > cBounds.y + cBounds.h + 0.5;
+    if (outLeft || outTop || outRight || outBottom) return true;
+    if ("children" in n) stack.push(...(n.children as readonly SceneNode[]));
+  }
+  return false;
+}
 
 const RASTER_MAX_W = 420;
 const RASTER_MAX_H = 420;
@@ -279,6 +356,10 @@ function isNearFullFrame(node: SceneNode, frame: FrameNode): boolean {
 function shouldRasterOverlay(node: SceneNode, frame: FrameNode): boolean {
   if (!("visible" in node) || (node as any).visible === false) return false;
   if (node.type === "TEXT") return false;
+  if (hasBlendMode(node)) {
+    if (isContainer(node) && containsTextDescendant(node)) return false;
+    return true;
+  }
 
   if (hasImageFill(node) && isNearFullFrame(node, frame)) return false;
   if (hasImageFill(node)) return true;
@@ -326,6 +407,9 @@ function getSmartBackground(frame: FrameNode): { fill: string; opacity: number }
 // ---- Masks ----
 function isRectMaskNode(n: SceneNode): n is RectangleNode {
   return n.type === "RECTANGLE" && (n as any).isMask === true;
+}
+function isMaskNode(n: SceneNode): boolean {
+  return (n as any).isMask === true;
 }
 function rectHasImageFill(r: RectangleNode): boolean {
   const fills = r.fills;
@@ -419,7 +503,7 @@ function isGradientRectPillCandidate(node: SceneNode): node is RectangleNode {
   return true;
 }
 
-async function exportOneFrame(frame: FrameNode, idx: number, total: number): Promise<ExportSlide> {
+async function exportOneFrame(frame: FrameNode, idx: number, total: number, exportScale: number): Promise<ExportSlide> {
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
@@ -440,80 +524,150 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
   const consumedMaskIds = new Set<string>();
   const consumedMaskedContentIds = new Set<string>();
 
-  async function tryExtractMaskPairsInContainer(container: SceneNode) {
-    if (!("children" in container)) return;
+  async function tryExtractMaskPairsInContainer(container: SceneNode): Promise<boolean> {
+    if (!("children" in container)) return false;
 
     const ch = (container.children as readonly SceneNode[]).filter((n) => ("visible" in n ? (n as any).visible !== false : true));
-    if (ch.length < 2) return;
+    if (ch.length < 2) return false;
 
     const first = ch[0];
     const second = ch[1];
 
-    if (!isRectMaskNode(first)) return;
-    if (second.type !== "RECTANGLE") return;
+    if (!isMaskNode(first)) return false;
 
-    const mask = first as RectangleNode;
-    const img = second as RectangleNode;
+    const maskNode = first;
+    const contentNode = second;
 
-    if (!isSafeMaskPair(mask, img)) return;
+    if (isRectMaskNode(maskNode) && contentNode.type === "RECTANGLE") {
+      const mask = maskNode as RectangleNode;
+      const img = contentNode as RectangleNode;
 
-    const maskR = rectRelativeToFrame(mask, frame);
-    const imgR = rectRelativeToFrame(img, frame);
-    const maskRadius = getCornerRadiusAny(mask);
+      if (!isSafeMaskPair(mask, img)) return false;
 
-    if (maskRadius > 0.5) {
-      postProgress("export", idx - 1, total, `Mask (rounded): ${frame.name}`, `Rasterizing rounded mask…`);
-      const contRect = rectRelativeToFrame(container, frame);
-      const bytes = await rasterizeNodePNG(container, 2);
+      const maskR = rectRelativeToFrame(mask, frame);
+      const imgR = rectRelativeToFrame(img, frame);
+      const maskRadius = getCornerRadiusAny(mask);
+
+      if (maskRadius > 0.5) {
+        postProgress("export", idx - 1, total, `Mask (rounded): ${frame.name}`, `Rasterizing rounded mask…`);
+        const contRect = rectRelativeToFrame(container, frame);
+        const bytes = await rasterizeNodePNG(container, exportScale);
+
+        z += 1;
+        const zVal = z;
+
+        items.push({
+          kind: "raster",
+          z: zVal,
+          id: `roundedMask__${container.id}`,
+          x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
+          pngBytes: Array.from(bytes)
+        });
+
+        markHide(container);
+        consumedMaskIds.add(mask.id);
+        consumedMaskedContentIds.add(img.id);
+        return true;
+      }
+
+      postProgress("export", idx - 1, total, `Mask image: ${frame.name}`, `Exporting masked image…`);
+      const imgBytes = await rasterizeNodePNG(img, exportScale);
+      const crop = cropFromMaskAndImage(maskR, imgR);
 
       z += 1;
       const zVal = z;
+      zById.set(mask.id, zVal);
+      zById.set(img.id, zVal);
 
       items.push({
-        kind: "raster",
+        kind: "maskedImage",
         z: zVal,
-        id: `roundedMask__${container.id}`,
-        x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
-        pngBytes: Array.from(bytes)
+        id: `${mask.id}__${img.id}`,
+        x: maskR.x, y: maskR.y, w: maskR.w, h: maskR.h,
+        pngBytes: Array.from(imgBytes),
+        crop
       });
 
-      markHide(container);
       consumedMaskIds.add(mask.id);
       consumedMaskedContentIds.add(img.id);
-      return;
+
+      markHide(mask);
+      markHide(img);
+      return true;
     }
 
-    postProgress("export", idx - 1, total, `Mask image: ${frame.name}`, `Exporting masked image…`);
-    const imgBytes = await rasterizeNodePNG(img, 2);
-    const crop = cropFromMaskAndImage(maskR, imgR);
+    postProgress("export", idx - 1, total, `Mask group: ${frame.name}`, `Rasterizing masked content…`);
+    const contRect = rectRelativeToFrame(container, frame);
+    const bytes = await rasterizeNodePNG(container, exportScale);
 
     z += 1;
     const zVal = z;
-    zById.set(mask.id, zVal);
-    zById.set(img.id, zVal);
 
     items.push({
-      kind: "maskedImage",
+      kind: "raster",
       z: zVal,
-      id: `${mask.id}__${img.id}`,
-      x: maskR.x, y: maskR.y, w: maskR.w, h: maskR.h,
-      pngBytes: Array.from(imgBytes),
-      crop
+      id: `maskGroup__${container.id}`,
+      x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
+      pngBytes: Array.from(bytes)
     });
 
-    consumedMaskIds.add(mask.id);
-    consumedMaskedContentIds.add(img.id);
-
-    markHide(mask);
-    markHide(img);
+    markHide(container);
+    return true;
   }
 
-  async function walk(node: SceneNode) {
+  function addTextItem(tn: TextNode) {
+    const r = rectRelativeToFrame(tn, frame);
+    const flags = getFirstCharFontStyleFlags(tn);
+    const fs = getFirstCharFontSize(tn);
+
+    z += 1;
+    zById.set(tn.id, z);
+
+    items.push({
+      kind: "text",
+      z,
+      id: tn.id,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      text: tn.characters ?? "",
+      fontFamily: getFirstCharFontFamily(tn),
+      fontSize: fs,
+      lineHeightPx: getTextLineHeightPx(tn, fs),
+      color: getFirstCharFillHex(tn),
+      align: alignMap(tn.textAlignHorizontal),
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: flags.bold,
+      italic: flags.italic,
+      uppercase: getIsUppercase(tn)
+    });
+
+    markHide(tn);
+  }
+
+  async function walk(node: SceneNode, textOnly = false) {
     if (!("visible" in node) || (node as any).visible === false) return;
     if (cancelRequested) return;
 
+    if (textOnly && node.type !== "TEXT") {
+      if ("children" in node) {
+        for (const ch of node.children as readonly SceneNode[]) {
+          await walk(ch as SceneNode, true);
+          if (cancelRequested) return;
+        }
+      }
+      return;
+    }
+
     if (node.id !== frame.id && isContainer(node)) {
-      await tryExtractMaskPairsInContainer(node);
+      const handledMask = await tryExtractMaskPairsInContainer(node);
+      if (handledMask) {
+        if ("children" in node) {
+          for (const ch of node.children as readonly SceneNode[]) {
+            await walk(ch as SceneNode, true);
+            if (cancelRequested) return;
+          }
+        }
+        return;
+      }
     }
 
     if (node.id !== frame.id) {
@@ -524,6 +678,29 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
 
       // 2) Container BG as editable shape (solid)
       if (node.type === "FRAME" || node.type === "INSTANCE" || node.type === "COMPONENT") {
+        if ("clipsContent" in node && (node as FrameNode).clipsContent === true && hasOverflowingDescendant(node)) {
+          const r = rectRelativeToFrame(node, frame);
+          postProgress("export", idx - 1, total, `Clipped frame: ${frame.name}`, `Rasterizing clipped content…`);
+          const bytes = await rasterizeContainerBackgroundOnly(node, exportScale);
+
+          items.push({
+            kind: "raster",
+            z,
+            id: `clippedFrame__${node.id}`,
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            pngBytes: Array.from(bytes)
+          });
+
+          markHide(node);
+          if ("children" in node) {
+            for (const ch of node.children as readonly SceneNode[]) {
+              await walk(ch as SceneNode, true);
+              if (cancelRequested) return;
+            }
+          }
+          return;
+        }
+
         if (isSafeContainerBg(node)) {
           const r = rectRelativeToFrame(node, frame);
           const fill = getSolidFill(node);
@@ -552,7 +729,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
         const isAlmostFull = r.w >= frame.width * 0.9 && r.h >= frame.height * 0.9;
         if (!isAlmostFull) {
           postProgress("export", idx - 1, total, `Gradient pill: ${frame.name}`, `Rasterizing gradient background…`);
-          const bytes = await rasterizeContainerBackgroundOnly(node, 2);
+          const bytes = await rasterizeContainerBackgroundOnly(node, exportScale);
 
           items.push({
             kind: "raster",
@@ -574,7 +751,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
         // If it's almost the entire slide, better leave it to BG PNG; otherwise export as overlay
         if (!isAlmostFull) {
           postProgress("export", idx - 1, total, `Gradient rect: ${frame.name}`, `Rasterizing gradient rectangle…`);
-          const bytes = await rasterizeNodePNG(node, 2);
+          const bytes = await rasterizeNodePNG(node, exportScale);
 
           items.push({
             kind: "raster",
@@ -592,27 +769,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
       // 3) Text
       if (node.type === "TEXT") {
         const tn = node as TextNode;
-        const r = rectRelativeToFrame(tn, frame);
-        const flags = getFirstCharFontStyleFlags(tn);
-        const fs = getFirstCharFontSize(tn);
-
-        items.push({
-          kind: "text",
-          z,
-          id: tn.id,
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          text: tn.characters ?? "",
-          fontFamily: getFirstCharFontFamily(tn),
-          fontSize: fs,
-          lineHeightPx: getTextLineHeightPx(tn, fs),
-          color: getFirstCharFillHex(tn),
-          align: alignMap(tn.textAlignHorizontal),
-          opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-          bold: flags.bold,
-          italic: flags.italic
-        });
-
-        markHide(tn);
+        addTextItem(tn);
         return;
       }
 
@@ -716,7 +873,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     try {
       const r = rectRelativeToFrame(n, frame);
       if (r.w <= 0 || r.h <= 0) continue;
-      const bytes = await rasterizeNodePNG(n, 2);
+      const bytes = await rasterizeNodePNG(n, exportScale);
       rasterItems.push({
         kind: "raster",
         z: zById.get(n.id) ?? 999999,
@@ -746,10 +903,13 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     for (const n of toHide) { prevVisible.set(n.id, (n as any).visible); (n as any).visible = false; }
 
     let bgPng: Uint8Array;
+    const prevClips = frame.clipsContent;
     try {
       throwIfCancelled();
-      bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 2 } });
+      if (!frame.clipsContent) frame.clipsContent = true;
+      bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: exportScale } });
     } finally {
+      frame.clipsContent = prevClips;
       for (const n of toHide) {
         const v = prevVisible.get(n.id);
         if (typeof v === "boolean") (n as any).visible = v;
@@ -765,7 +925,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     name: frame.name,
     width: frame.width,
     height: frame.height,
-    scale: 2,
+    scale: exportScale,
     bgPngBytes,
     bgShape,
     items: allItems
@@ -789,6 +949,9 @@ figma.ui.onmessage = async (msg) => {
       const ids: string[] = Array.isArray(msg.frameIds) ? msg.frameIds : [];
       if (!ids.length) { postError("No frames in export list."); return; }
 
+      const quality = String(msg.quality || "best");
+      const exportScale = quality === "low" ? 1.2 : quality === "medium" ? 2 : 2.5;
+
       const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
       const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
 
@@ -799,14 +962,14 @@ figma.ui.onmessage = async (msg) => {
       const slides: ExportSlide[] = [];
       for (let i = 0; i < frames.length; i++) {
         throwIfCancelled();
-        slides.push(await exportOneFrame(frames[i], i + 1, frames.length));
+        slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale));
       }
 
       throwIfCancelled();
 
       const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
 
-      figma.ui.postMessage({ type: "BATCH_BG_AND_ITEMS_V051", filename, slides });
+      figma.ui.postMessage({ type: "BATCH_BG_AND_ITEMS_V051", filename, slides, format: msg.format || "pptx" });
       postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
       return;
     }
