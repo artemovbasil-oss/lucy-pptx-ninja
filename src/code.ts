@@ -970,8 +970,11 @@ figma.ui.onmessage = async (msg) => {
       if (!ids.length) { postError("No frames in export list."); return; }
 
       const quality = String(msg.quality || "best");
-      const exportScale = quality === "low" ? 1 : quality === "medium" ? 2 : 3;
-      const includeFullRaster = String(msg.format || "pptx") === "pdf";
+      const format = String(msg.format || "pptx");
+      const exportScale = format === "pdf"
+        ? (quality === "low" ? 1 : quality === "medium" ? 1.5 : 2)
+        : (quality === "low" ? 1 : quality === "medium" ? 2 : 3);
+      const includeFullRaster = format === "pdf";
 
       const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
       const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
@@ -994,7 +997,7 @@ figma.ui.onmessage = async (msg) => {
         type: "BATCH_BG_AND_ITEMS_V051",
         filename,
         slides,
-        format: msg.format || "pptx",
+        format,
         quality
       });
       postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");

@@ -576,9 +576,15 @@ async function loadImageFromBytes(bytes: number[]): Promise<HTMLImageElement> {
 }
 
 function jpgQualityForMode(mode: string): number {
-  if (mode === "low") return 0.5;
-  if (mode === "medium") return 0.75;
-  return 0.95;
+  if (mode === "low") return 0.45;
+  if (mode === "medium") return 0.7;
+  return 0.9;
+}
+
+function rasterScaleForMode(mode: string): number {
+  if (mode === "low") return 0.6;
+  if (mode === "medium") return 0.8;
+  return 1;
 }
 
 function buildPdfBytes(pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeight: number; pageWidth: number; pageHeight: number }[]): Uint8Array {
@@ -689,30 +695,37 @@ async function buildPdfFromSlides(filename: string, slides: ExportSlide[], quali
     setProgress("pdf", si, slides.length, `Building page ${si + 1}/${slides.length}`, sd.name);
 
     const trf = buildTransformForSlide(targetWpx, targetHpx, sd.width, sd.height);
-    const canvas = createCanvas(targetWpx, targetHpx);
+    const rasterScale = rasterScaleForMode(qualityMode);
+    const canvas = createCanvas(targetWpx * rasterScale, targetHpx * rasterScale);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas unavailable");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (sd.fullPngBytes && sd.fullPngBytes.length > 0) {
       const img = await loadImageFromBytes(sd.fullPngBytes);
-      ctx.drawImage(img, 0, 0, targetWpx, targetHpx);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     } else {
       if (Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0) {
         const img = await loadImageFromBytes(sd.bgPngBytes);
-        ctx.drawImage(img, trf.ox, trf.oy, trf.outW, trf.outH);
+        ctx.drawImage(
+          img,
+          trf.ox * rasterScale,
+          trf.oy * rasterScale,
+          trf.outW * rasterScale,
+          trf.outH * rasterScale
+        );
       } else if (sd.bgShape?.fill) {
         ctx.fillStyle = hexToRgba(sd.bgShape.fill, typeof sd.bgShape.opacity === "number" ? sd.bgShape.opacity : 1);
-        ctx.fillRect(0, 0, targetWpx, targetHpx);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
       const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
       for (const it of items) {
         if (uiCancelRequested) throw new Error("CANCELLED_UI");
-        const sx = (v: number) => trf.ox + v * trf.s;
-        const sy = (v: number) => trf.oy + v * trf.s;
-        const sw = (v: number) => v * trf.s;
-        const sh = (v: number) => v * trf.s;
+        const sx = (v: number) => (trf.ox + v * trf.s) * rasterScale;
+        const sy = (v: number) => (trf.oy + v * trf.s) * rasterScale;
+        const sw = (v: number) => v * trf.s * rasterScale;
+        const sh = (v: number) => v * trf.s * rasterScale;
 
         if (it.kind === "raster") {
           const img = await loadImageFromBytes(it.pngBytes);
@@ -782,19 +795,17 @@ async function buildPdfFromSlides(filename: string, slides: ExportSlide[], quali
         if (it.kind === "text") {
           if (!it.text || String(it.text).length === 0) continue;
           const baseFsPx = Number(it.fontSize || 14);
-          const effFsPx = baseFsPx * trf.s;
-          const xNudge = TEXT_NUDGE_X_PX * trf.s;
-          const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
-          const xPx = sx((it.x ?? 0) + xNudge);
-          const yPx = sy((it.y ?? 0) + yNudge);
-          const wPx = sw((it.w ?? 10) + (TEXT_BOX_W_PAD_PX * trf.s));
-          const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + (TEXT_BOX_H_PAD_PX * trf.s));
+          const effFsPx = baseFsPx * trf.s * rasterScale;
+          const xPx = sx((it.x ?? 0) + TEXT_NUDGE_X_PX);
+          const yPx = sy((it.y ?? 0) + getTextNudgeYPx(effFsPx));
+          const wPx = sw((it.w ?? 10) + TEXT_BOX_W_PAD_PX);
+          const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + TEXT_BOX_H_PAD_PX);
           const opacity = typeof it.opacity === "number" ? it.opacity : 1;
           const fontFace = mapFontFamily(it.fontFamily);
           const rawText = String(it.text);
           const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
           const lines = finalText.split("\n");
-          const lineHeight = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s : effFsPx * 1.2;
+          const lineHeight = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s * rasterScale : effFsPx * 1.2;
 
           ctx.save();
           ctx.globalAlpha = opacity;
