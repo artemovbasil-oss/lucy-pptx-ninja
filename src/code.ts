@@ -71,6 +71,12 @@ function getAbsXY(node: SceneNode): { x: number; y: number } {
   const t = node.absoluteTransform;
   return { x: t[0][2], y: t[1][2] };
 }
+function getNodeBounds(node: SceneNode): { x: number; y: number; w: number; h: number } {
+  const bb = (node as any).absoluteBoundingBox as { x: number; y: number; width: number; height: number } | undefined;
+  if (bb) return { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
+  const t = node.absoluteTransform;
+  return { x: t[0][2], y: t[1][2], w: node.width, h: node.height };
+}
 function rectRelativeToFrame(node: SceneNode, frame: FrameNode) {
   const n = getAbsXY(node);
   const f = getAbsXY(frame);
@@ -278,6 +284,23 @@ function containsTextDescendant(node: SceneNode): boolean {
     if ("visible" in n && (n as any).visible === false) continue;
     if (n.type === "TEXT") return true;
     if ("children" in n) for (const ch of (n.children as any)) arr.push(ch as SceneNode);
+  }
+  return false;
+}
+function hasOverflowingDescendant(container: SceneNode): boolean {
+  if (!("children" in container)) return false;
+  const cBounds = getNodeBounds(container);
+  const stack: SceneNode[] = [...(container.children as readonly SceneNode[])];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if ("visible" in n && (n as any).visible === false) continue;
+    const b = getNodeBounds(n);
+    const outLeft = b.x < cBounds.x - 0.5;
+    const outTop = b.y < cBounds.y - 0.5;
+    const outRight = b.x + b.w > cBounds.x + cBounds.w + 0.5;
+    const outBottom = b.y + b.h > cBounds.y + cBounds.h + 0.5;
+    if (outLeft || outTop || outRight || outBottom) return true;
+    if ("children" in n) stack.push(...(n.children as readonly SceneNode[]));
   }
   return false;
 }
@@ -619,7 +642,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
 
       // 2) Container BG as editable shape (solid)
       if (node.type === "FRAME" || node.type === "INSTANCE" || node.type === "COMPONENT") {
-        if ("clipsContent" in node && (node as FrameNode).clipsContent === true) {
+        if ("clipsContent" in node && (node as FrameNode).clipsContent === true && hasOverflowingDescendant(node)) {
           const r = rectRelativeToFrame(node, frame);
           postProgress("export", idx - 1, total, `Clipped frame: ${frame.name}`, `Rasterizing clipped content…`);
           const bytes = await rasterizeContainerBackgroundOnly(node, 2);
@@ -844,10 +867,13 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     for (const n of toHide) { prevVisible.set(n.id, (n as any).visible); (n as any).visible = false; }
 
     let bgPng: Uint8Array;
+    const prevClips = frame.clipsContent;
     try {
       throwIfCancelled();
+      if (!frame.clipsContent) frame.clipsContent = true;
       bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 2 } });
     } finally {
+      frame.clipsContent = prevClips;
       for (const n of toHide) {
         const v = prevVisible.get(n.id);
         if (typeof v === "boolean") (n as any).visible = v;
