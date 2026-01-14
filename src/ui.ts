@@ -18,8 +18,8 @@ const listEl = document.getElementById("list") as HTMLDivElement;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
 const footerEl = document.getElementById("footer") as HTMLDivElement;
 
-const formatSelect = document.getElementById("formatSelect") as HTMLSelectElement | null;
-const qualitySelect = document.getElementById("qualitySelect") as HTMLSelectElement | null;
+const formatSelect = document.getElementById("formatSelect") as HTMLDivElement | null;
+const qualitySelect = document.getElementById("qualitySelect") as HTMLDivElement | null;
 
 const versionEl = document.getElementById("version") as HTMLDivElement | null;
 
@@ -297,8 +297,8 @@ exportBtn.onclick = () => {
     pluginMessage: {
       type: "EXPORT_PPTX_ORDERED",
       frameIds: ids,
-      format: formatSelect?.value ?? "pptx",
-      quality: qualitySelect?.value ?? "best"
+      format: getSegmentedValue(formatSelect, "pptx"),
+      quality: getSegmentedValue(qualitySelect, "best")
     }
   }, "*");
 };
@@ -597,41 +597,65 @@ function buildPdfBytes(pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeigh
     offset += b.length;
   }
 
-  function addObject(content: string | Uint8Array, streamBytes?: Uint8Array) {
-    xref.push(offset);
-    const objNum = xref.length;
-    pushString(`${objNum} 0 obj\n`);
-    if (streamBytes) {
-      pushString(String(content));
-      pushString("\nstream\n");
-      pushBytes(streamBytes);
-      pushString("\nendstream\nendobj\n");
-    } else {
-      pushString(String(content));
-      pushString("\nendobj\n");
-    }
-    return objNum;
-  }
-
   pushString("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
 
+  const objects: Array<{ id: number; content: string; stream?: Uint8Array }> = [];
+  const catalogId = 1;
+  const pagesId = 2;
+  let nextId = 3;
   const pageRefs: number[] = [];
 
   for (const page of pages) {
-    const imgObj = addObject(
-      `<< /Type /XObject /Subtype /Image /Width ${page.imgWidth} /Height ${page.imgHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpgBytes.length} >>`,
-      page.jpgBytes
-    );
-    const contentStream = `q ${page.pageWidth} 0 0 ${page.pageHeight} 0 0 cm /Im${imgObj} Do Q`;
-    const contentObj = addObject(`<< /Length ${contentStream.length} >>`, encoder.encode(contentStream));
-    const pageObj = addObject(
-      `<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im${imgObj} ${imgObj} 0 R >> >> /MediaBox [0 0 ${page.pageWidth} ${page.pageHeight}] /Contents ${contentObj} 0 R >>`
-    );
-    pageRefs.push(pageObj);
+    const imgId = nextId++;
+    const contentId = nextId++;
+    const pageId = nextId++;
+
+    objects.push({
+      id: imgId,
+      content: `<< /Type /XObject /Subtype /Image /Width ${page.imgWidth} /Height ${page.imgHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpgBytes.length} >>`,
+      stream: page.jpgBytes
+    });
+
+    const contentStream = `q ${page.pageWidth} 0 0 ${page.pageHeight} 0 0 cm /Im${imgId} Do Q`;
+    objects.push({
+      id: contentId,
+      content: `<< /Length ${contentStream.length} >>`,
+      stream: encoder.encode(contentStream)
+    });
+
+    objects.push({
+      id: pageId,
+      content: `<< /Type /Page /Parent ${pagesId} 0 R /Resources << /XObject << /Im${imgId} ${imgId} 0 R >> >> /MediaBox [0 0 ${page.pageWidth} ${page.pageHeight}] /Contents ${contentId} 0 R >>`
+    });
+
+    pageRefs.push(pageId);
   }
 
-  const pagesObj = addObject(`<< /Type /Pages /Kids [${pageRefs.map((r) => `${r} 0 R`).join(" ")}] /Count ${pageRefs.length} >>`);
-  const catalogObj = addObject(`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`);
+  objects.push({
+    id: pagesId,
+    content: `<< /Type /Pages /Kids [${pageRefs.map((r) => `${r} 0 R`).join(" ")}] /Count ${pageRefs.length} >>`
+  });
+
+  objects.push({
+    id: catalogId,
+    content: `<< /Type /Catalog /Pages ${pagesId} 0 R >>`
+  });
+
+  objects.sort((a, b) => a.id - b.id);
+
+  for (const obj of objects) {
+    xref.push(offset);
+    pushString(`${obj.id} 0 obj\n`);
+    if (obj.stream) {
+      pushString(obj.content);
+      pushString("\nstream\n");
+      pushBytes(obj.stream);
+      pushString("\nendstream\nendobj\n");
+    } else {
+      pushString(obj.content);
+      pushString("\nendobj\n");
+    }
+  }
 
   const xrefOffset = offset;
   pushString(`xref\n0 ${xref.length + 1}\n`);
@@ -639,7 +663,7 @@ function buildPdfBytes(pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeigh
   for (const pos of xref) {
     pushString(`${String(pos).padStart(10, "0")} 00000 n \n`);
   }
-  pushString(`trailer\n<< /Size ${xref.length + 1} /Root ${catalogObj} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  pushString(`trailer\n<< /Size ${xref.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
 
   const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
   const out = new Uint8Array(totalLength);
@@ -906,3 +930,25 @@ window.onmessage = async (event) => {
     return;
   }
 };
+function getSegmentedValue(groupEl: HTMLDivElement | null, fallback: string) {
+  const active = groupEl?.querySelector<HTMLButtonElement>(".segment.isActive");
+  return active?.dataset.value || fallback;
+}
+
+function setupSegmented(groupEl: HTMLDivElement | null, fallback: string) {
+  if (!groupEl) return;
+  const buttons = Array.from(groupEl.querySelectorAll<HTMLButtonElement>(".segment"));
+  if (!buttons.some((btn) => btn.classList.contains("isActive"))) {
+    const match = buttons.find((btn) => btn.dataset.value === fallback);
+    if (match) match.classList.add("isActive");
+  }
+  groupEl.addEventListener("click", (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLButtonElement>(".segment");
+    if (!target || !groupEl.contains(target)) return;
+    buttons.forEach((btn) => btn.classList.remove("isActive"));
+    target.classList.add("isActive");
+  });
+}
+
+setupSegmented(formatSelect, "pptx");
+setupSegmented(qualitySelect, "best");
