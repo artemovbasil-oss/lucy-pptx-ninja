@@ -14,6 +14,7 @@
         --shadow: rgba(0, 0, 0, 0.35);
         --r: 16px;
         --r2: 12px;
+        --footer-h: 64px;
         --ease: cubic-bezier(.2,.8,.2,1);
       }
 
@@ -29,11 +30,11 @@
       * { box-sizing: border-box; }
 
       .wrap {
-        padding: 16px 16px 108px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
         gap: 12px;
-        height: 100vh;
+        height: calc(100vh - var(--footer-h));
         overflow-y: auto;
       }
 
@@ -255,6 +256,7 @@
         right: 0;
         margin-top: auto;
         padding: 10px 16px 12px;
+        height: var(--footer-h);
         display: flex;
         gap: 8px;
         background: var(--bg);
