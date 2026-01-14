@@ -329,6 +329,7 @@ type ExportSlide = {
   scale: number;
   bgPngBytes: number[]; // empty if bgShape is used
   bgShape?: { fill: string; opacity: number } | null; // optional Smart BG
+  fullPngBytes?: number[] | null;
   items: Array<any>;
 };
 
@@ -575,9 +576,9 @@ async function loadImageFromBytes(bytes: number[]): Promise<HTMLImageElement> {
 }
 
 function jpgQualityForMode(mode: string): number {
-  if (mode === "low") return 0.6;
-  if (mode === "medium") return 0.8;
-  return 0.92;
+  if (mode === "low") return 0.5;
+  if (mode === "medium") return 0.75;
+  return 0.95;
 }
 
 function buildPdfBytes(pages: { jpgBytes: Uint8Array; imgWidth: number; imgHeight: number; pageWidth: number; pageHeight: number }[]): Uint8Array {
@@ -693,122 +694,127 @@ async function buildPdfFromSlides(filename: string, slides: ExportSlide[], quali
     if (!ctx) throw new Error("Canvas unavailable");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0) {
-      const img = await loadImageFromBytes(sd.bgPngBytes);
-      ctx.drawImage(img, trf.ox, trf.oy, trf.outW, trf.outH);
-    } else if (sd.bgShape?.fill) {
-      ctx.fillStyle = hexToRgba(sd.bgShape.fill, typeof sd.bgShape.opacity === "number" ? sd.bgShape.opacity : 1);
-      ctx.fillRect(0, 0, targetWpx, targetHpx);
-    }
-
-    const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-    for (const it of items) {
-      if (uiCancelRequested) throw new Error("CANCELLED_UI");
-      const sx = (v: number) => trf.ox + v * trf.s;
-      const sy = (v: number) => trf.oy + v * trf.s;
-      const sw = (v: number) => v * trf.s;
-      const sh = (v: number) => v * trf.s;
-
-      if (it.kind === "raster") {
-        const img = await loadImageFromBytes(it.pngBytes);
-        ctx.drawImage(img, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
-        continue;
+    if (sd.fullPngBytes && sd.fullPngBytes.length > 0) {
+      const img = await loadImageFromBytes(sd.fullPngBytes);
+      ctx.drawImage(img, 0, 0, targetWpx, targetHpx);
+    } else {
+      if (Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0) {
+        const img = await loadImageFromBytes(sd.bgPngBytes);
+        ctx.drawImage(img, trf.ox, trf.oy, trf.outW, trf.outH);
+      } else if (sd.bgShape?.fill) {
+        ctx.fillStyle = hexToRgba(sd.bgShape.fill, typeof sd.bgShape.opacity === "number" ? sd.bgShape.opacity : 1);
+        ctx.fillRect(0, 0, targetWpx, targetHpx);
       }
 
-      if (it.kind === "maskedImage") {
-        const img = await loadImageFromBytes(it.pngBytes);
-        const srcW = img.width;
-        const srcH = img.height;
-        const sx0 = it.crop.x * srcW;
-        const sy0 = it.crop.y * srcH;
-        const sw0 = it.crop.w * srcW;
-        const sh0 = it.crop.h * srcH;
-        ctx.drawImage(img, sx0, sy0, sw0, sh0, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
-        continue;
-      }
+      const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+      for (const it of items) {
+        if (uiCancelRequested) throw new Error("CANCELLED_UI");
+        const sx = (v: number) => trf.ox + v * trf.s;
+        const sy = (v: number) => trf.oy + v * trf.s;
+        const sw = (v: number) => v * trf.s;
+        const sh = (v: number) => v * trf.s;
 
-      if (it.kind === "shape") {
-        const x = sx(it.x ?? 0);
-        const y = sy(it.y ?? 0);
-        const w = sw(it.w ?? 10);
-        const h = sh(it.h ?? 10);
-        const opacity = typeof it.opacity === "number" ? it.opacity : 1;
-
-        ctx.save();
-        ctx.globalAlpha = opacity;
-
-        if (it.shape === "rect") {
-          const radius = typeof it.radius === "number" ? it.radius * trf.s : 0;
-          drawRoundRect(ctx, x, y, w, h, radius);
-          if (it.fill) {
-            ctx.fillStyle = hexToRgba(it.fill, 1);
-            ctx.fill();
-          }
-          if (it.stroke) {
-            ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
-            ctx.lineWidth = sw(it.stroke.width);
-            ctx.stroke();
-          }
-        } else if (it.shape === "ellipse") {
-          ctx.beginPath();
-          ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-          if (it.fill) {
-            ctx.fillStyle = hexToRgba(it.fill, 1);
-            ctx.fill();
-          }
-          if (it.stroke) {
-            ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
-            ctx.lineWidth = sw(it.stroke.width);
-            ctx.stroke();
-          }
-        } else if (it.shape === "line") {
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + w, y + h);
-          ctx.strokeStyle = it.stroke ? hexToRgba(it.stroke.color, 1) : "#000";
-          ctx.lineWidth = it.stroke ? sw(it.stroke.width) : 1;
-          ctx.stroke();
+        if (it.kind === "raster") {
+          const img = await loadImageFromBytes(it.pngBytes);
+          ctx.drawImage(img, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
+          continue;
         }
 
-        ctx.restore();
-        continue;
-      }
-
-      if (it.kind === "text") {
-        if (!it.text || String(it.text).length === 0) continue;
-        const baseFsPx = Number(it.fontSize || 14);
-        const effFsPx = baseFsPx * trf.s;
-        const xNudge = TEXT_NUDGE_X_PX * trf.s;
-        const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
-        const xPx = sx((it.x ?? 0) + xNudge);
-        const yPx = sy((it.y ?? 0) + yNudge);
-        const wPx = sw((it.w ?? 10) + (TEXT_BOX_W_PAD_PX * trf.s));
-        const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + (TEXT_BOX_H_PAD_PX * trf.s));
-        const opacity = typeof it.opacity === "number" ? it.opacity : 1;
-        const fontFace = mapFontFamily(it.fontFamily);
-        const rawText = String(it.text);
-        const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
-        const lines = finalText.split("\n");
-        const lineHeight = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s : effFsPx * 1.2;
-
-        ctx.save();
-        ctx.globalAlpha = opacity;
-        ctx.fillStyle = hexToRgba(it.color || "000000", 1);
-        ctx.font = `${it.italic ? "italic " : ""}${it.bold ? "bold " : ""}${Math.max(1, Math.round(effFsPx))}px ${fontFace}`;
-        ctx.textBaseline = "top";
-
-        for (let li = 0; li < lines.length; li++) {
-          const line = lines[li];
-          const metrics = ctx.measureText(line);
-          let drawX = xPx;
-          if (it.align === "center") drawX = xPx + (wPx - metrics.width) / 2;
-          if (it.align === "right") drawX = xPx + wPx - metrics.width;
-          const drawY = yPx + li * lineHeight;
-          if (drawY > yPx + hPx) break;
-          ctx.fillText(line, drawX, drawY);
+        if (it.kind === "maskedImage") {
+          const img = await loadImageFromBytes(it.pngBytes);
+          const srcW = img.width;
+          const srcH = img.height;
+          const sx0 = it.crop.x * srcW;
+          const sy0 = it.crop.y * srcH;
+          const sw0 = it.crop.w * srcW;
+          const sh0 = it.crop.h * srcH;
+          ctx.drawImage(img, sx0, sy0, sw0, sh0, sx(it.x), sy(it.y), sw(it.w), sh(it.h));
+          continue;
         }
 
-        ctx.restore();
+        if (it.kind === "shape") {
+          const x = sx(it.x ?? 0);
+          const y = sy(it.y ?? 0);
+          const w = sw(it.w ?? 10);
+          const h = sh(it.h ?? 10);
+          const opacity = typeof it.opacity === "number" ? it.opacity : 1;
+
+          ctx.save();
+          ctx.globalAlpha = opacity;
+
+          if (it.shape === "rect") {
+            const radius = typeof it.radius === "number" ? it.radius * trf.s : 0;
+            drawRoundRect(ctx, x, y, w, h, radius);
+            if (it.fill) {
+              ctx.fillStyle = hexToRgba(it.fill, 1);
+              ctx.fill();
+            }
+            if (it.stroke) {
+              ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
+              ctx.lineWidth = sw(it.stroke.width);
+              ctx.stroke();
+            }
+          } else if (it.shape === "ellipse") {
+            ctx.beginPath();
+            ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+            if (it.fill) {
+              ctx.fillStyle = hexToRgba(it.fill, 1);
+              ctx.fill();
+            }
+            if (it.stroke) {
+              ctx.strokeStyle = hexToRgba(it.stroke.color, 1);
+              ctx.lineWidth = sw(it.stroke.width);
+              ctx.stroke();
+            }
+          } else if (it.shape === "line") {
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + w, y + h);
+            ctx.strokeStyle = it.stroke ? hexToRgba(it.stroke.color, 1) : "#000";
+            ctx.lineWidth = it.stroke ? sw(it.stroke.width) : 1;
+            ctx.stroke();
+          }
+
+          ctx.restore();
+          continue;
+        }
+
+        if (it.kind === "text") {
+          if (!it.text || String(it.text).length === 0) continue;
+          const baseFsPx = Number(it.fontSize || 14);
+          const effFsPx = baseFsPx * trf.s;
+          const xNudge = TEXT_NUDGE_X_PX * trf.s;
+          const yNudge = getTextNudgeYPx(effFsPx) * trf.s;
+          const xPx = sx((it.x ?? 0) + xNudge);
+          const yPx = sy((it.y ?? 0) + yNudge);
+          const wPx = sw((it.w ?? 10) + (TEXT_BOX_W_PAD_PX * trf.s));
+          const hPx = sh((it.h ?? 10) + TEXT_HEIGHT_PAD_PX + (TEXT_BOX_H_PAD_PX * trf.s));
+          const opacity = typeof it.opacity === "number" ? it.opacity : 1;
+          const fontFace = mapFontFamily(it.fontFamily);
+          const rawText = String(it.text);
+          const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
+          const lines = finalText.split("\n");
+          const lineHeight = typeof it.lineHeightPx === "number" ? it.lineHeightPx * trf.s : effFsPx * 1.2;
+
+          ctx.save();
+          ctx.globalAlpha = opacity;
+          ctx.fillStyle = hexToRgba(it.color || "000000", 1);
+          ctx.font = `${it.italic ? "italic " : ""}${it.bold ? "bold " : ""}${Math.max(1, Math.round(effFsPx))}px ${fontFace}`;
+          ctx.textBaseline = "top";
+
+          for (let li = 0; li < lines.length; li++) {
+            const line = lines[li];
+            const metrics = ctx.measureText(line);
+            let drawX = xPx;
+            if (it.align === "center") drawX = xPx + (wPx - metrics.width) / 2;
+            if (it.align === "right") drawX = xPx + wPx - metrics.width;
+            const drawY = yPx + li * lineHeight;
+            if (drawY > yPx + hPx) break;
+            ctx.fillText(line, drawX, drawY);
+          }
+
+          ctx.restore();
+        }
       }
     }
 

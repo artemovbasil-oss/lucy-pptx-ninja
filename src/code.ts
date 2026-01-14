@@ -150,6 +150,7 @@ type ExportItem = ExportText | ExportShape | ExportRaster | ExportMaskedImage;
 type ExportSlide = {
   name: string; width: number; height: number; scale: number;
   bgPngBytes: number[]; bgShape?: { fill: string; opacity: number } | null;
+  fullPngBytes?: number[] | null;
   items: ExportItem[];
 };
 
@@ -503,7 +504,13 @@ function isGradientRectPillCandidate(node: SceneNode): node is RectangleNode {
   return true;
 }
 
-async function exportOneFrame(frame: FrameNode, idx: number, total: number, exportScale: number): Promise<ExportSlide> {
+async function exportOneFrame(
+  frame: FrameNode,
+  idx: number,
+  total: number,
+  exportScale: number,
+  includeFullRaster: boolean
+): Promise<ExportSlide> {
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
@@ -918,6 +925,18 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number, expo
     bgPngBytes = Array.from(bgPng);
   }
 
+  let fullPngBytes: number[] | null = null;
+  if (includeFullRaster) {
+    const prevClips = frame.clipsContent;
+    try {
+      if (!frame.clipsContent) frame.clipsContent = true;
+      const fullPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: exportScale } });
+      fullPngBytes = Array.from(fullPng);
+    } finally {
+      frame.clipsContent = prevClips;
+    }
+  }
+
   throwIfCancelled();
   postProgress("export", idx, total, `Ready: ${frame.name}`);
 
@@ -928,6 +947,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number, expo
     scale: exportScale,
     bgPngBytes,
     bgShape,
+    fullPngBytes,
     items: allItems
   };
 }
@@ -950,7 +970,8 @@ figma.ui.onmessage = async (msg) => {
       if (!ids.length) { postError("No frames in export list."); return; }
 
       const quality = String(msg.quality || "best");
-      const exportScale = quality === "low" ? 1.2 : quality === "medium" ? 2 : 2.5;
+      const exportScale = quality === "low" ? 1 : quality === "medium" ? 2 : 3;
+      const includeFullRaster = String(msg.format || "pptx") === "pdf";
 
       const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
       const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
@@ -962,14 +983,20 @@ figma.ui.onmessage = async (msg) => {
       const slides: ExportSlide[] = [];
       for (let i = 0; i < frames.length; i++) {
         throwIfCancelled();
-        slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale));
+        slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster));
       }
 
       throwIfCancelled();
 
       const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
 
-      figma.ui.postMessage({ type: "BATCH_BG_AND_ITEMS_V051", filename, slides, format: msg.format || "pptx" });
+      figma.ui.postMessage({
+        type: "BATCH_BG_AND_ITEMS_V051",
+        filename,
+        slides,
+        format: msg.format || "pptx",
+        quality
+      });
       postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
       return;
     }
