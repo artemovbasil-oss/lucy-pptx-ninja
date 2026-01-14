@@ -53,6 +53,23 @@
       .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
       .label { font-weight: 800; letter-spacing: .2px; }
       .hint { color: var(--muted); }
+      .fieldRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+      .fieldLabel { color: var(--muted); font-size: 11px; min-width: 64px; }
+      .select {
+        flex: 1;
+        appearance: none;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        color: var(--text);
+        padding: 8px 10px;
+        font: inherit;
+      }
+      .select:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-2), 0 0 0 1px rgba(133,205,219,0.8) inset;
+        border-color: rgba(133,205,219,0.9);
+      }
 
       /* Buttons */
       .btn {
@@ -336,6 +353,30 @@
         </div>
 
         <div id="status" class="status">Select one or more frames.</div>
+      </div>
+
+      <div class="card">
+        <div class="cardHeader">
+          <div class="label">Export</div>
+          <div class="hint">Format & quality</div>
+        </div>
+
+        <div class="fieldRow">
+          <label class="fieldLabel" for="formatSelect">Format</label>
+          <select id="formatSelect" class="select">
+            <option value="pptx" selected>PPTX</option>
+            <option value="pdf">PDF</option>
+          </select>
+        </div>
+
+        <div class="fieldRow">
+          <label class="fieldLabel" for="qualitySelect">Quality</label>
+          <select id="qualitySelect" class="select">
+            <option value="best" selected>Best (largest file)</option>
+            <option value="medium">Medium (balanced)</option>
+            <option value="low">Low (small file)</option>
+          </select>
+        </div>
       </div>
 
       <div class="card" id="slidesCard">

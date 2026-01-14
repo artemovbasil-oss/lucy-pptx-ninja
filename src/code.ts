@@ -503,7 +503,7 @@ function isGradientRectPillCandidate(node: SceneNode): node is RectangleNode {
   return true;
 }
 
-async function exportOneFrame(frame: FrameNode, idx: number, total: number): Promise<ExportSlide> {
+async function exportOneFrame(frame: FrameNode, idx: number, total: number, exportScale: number): Promise<ExportSlide> {
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
@@ -551,7 +551,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
       if (maskRadius > 0.5) {
         postProgress("export", idx - 1, total, `Mask (rounded): ${frame.name}`, `Rasterizing rounded mask…`);
         const contRect = rectRelativeToFrame(container, frame);
-        const bytes = await rasterizeNodePNG(container, 2);
+        const bytes = await rasterizeNodePNG(container, exportScale);
 
         z += 1;
         const zVal = z;
@@ -571,7 +571,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
       }
 
       postProgress("export", idx - 1, total, `Mask image: ${frame.name}`, `Exporting masked image…`);
-      const imgBytes = await rasterizeNodePNG(img, 2);
+      const imgBytes = await rasterizeNodePNG(img, exportScale);
       const crop = cropFromMaskAndImage(maskR, imgR);
 
       z += 1;
@@ -598,7 +598,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
 
     postProgress("export", idx - 1, total, `Mask group: ${frame.name}`, `Rasterizing masked content…`);
     const contRect = rectRelativeToFrame(container, frame);
-    const bytes = await rasterizeNodePNG(container, 2);
+    const bytes = await rasterizeNodePNG(container, exportScale);
 
     z += 1;
     const zVal = z;
@@ -681,7 +681,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
         if ("clipsContent" in node && (node as FrameNode).clipsContent === true && hasOverflowingDescendant(node)) {
           const r = rectRelativeToFrame(node, frame);
           postProgress("export", idx - 1, total, `Clipped frame: ${frame.name}`, `Rasterizing clipped content…`);
-          const bytes = await rasterizeContainerBackgroundOnly(node, 2);
+          const bytes = await rasterizeContainerBackgroundOnly(node, exportScale);
 
           items.push({
             kind: "raster",
@@ -729,7 +729,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
         const isAlmostFull = r.w >= frame.width * 0.9 && r.h >= frame.height * 0.9;
         if (!isAlmostFull) {
           postProgress("export", idx - 1, total, `Gradient pill: ${frame.name}`, `Rasterizing gradient background…`);
-          const bytes = await rasterizeContainerBackgroundOnly(node, 2);
+          const bytes = await rasterizeContainerBackgroundOnly(node, exportScale);
 
           items.push({
             kind: "raster",
@@ -751,7 +751,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
         // If it's almost the entire slide, better leave it to BG PNG; otherwise export as overlay
         if (!isAlmostFull) {
           postProgress("export", idx - 1, total, `Gradient rect: ${frame.name}`, `Rasterizing gradient rectangle…`);
-          const bytes = await rasterizeNodePNG(node, 2);
+          const bytes = await rasterizeNodePNG(node, exportScale);
 
           items.push({
             kind: "raster",
@@ -873,7 +873,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     try {
       const r = rectRelativeToFrame(n, frame);
       if (r.w <= 0 || r.h <= 0) continue;
-      const bytes = await rasterizeNodePNG(n, 2);
+      const bytes = await rasterizeNodePNG(n, exportScale);
       rasterItems.push({
         kind: "raster",
         z: zById.get(n.id) ?? 999999,
@@ -907,7 +907,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     try {
       throwIfCancelled();
       if (!frame.clipsContent) frame.clipsContent = true;
-      bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 2 } });
+      bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: exportScale } });
     } finally {
       frame.clipsContent = prevClips;
       for (const n of toHide) {
@@ -925,7 +925,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
     name: frame.name,
     width: frame.width,
     height: frame.height,
-    scale: 2,
+    scale: exportScale,
     bgPngBytes,
     bgShape,
     items: allItems
@@ -949,6 +949,9 @@ figma.ui.onmessage = async (msg) => {
       const ids: string[] = Array.isArray(msg.frameIds) ? msg.frameIds : [];
       if (!ids.length) { postError("No frames in export list."); return; }
 
+      const quality = String(msg.quality || "best");
+      const exportScale = quality === "low" ? 1.2 : quality === "medium" ? 2 : 2.5;
+
       const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
       const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
 
@@ -959,14 +962,14 @@ figma.ui.onmessage = async (msg) => {
       const slides: ExportSlide[] = [];
       for (let i = 0; i < frames.length; i++) {
         throwIfCancelled();
-        slides.push(await exportOneFrame(frames[i], i + 1, frames.length));
+        slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale));
       }
 
       throwIfCancelled();
 
       const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
 
-      figma.ui.postMessage({ type: "BATCH_BG_AND_ITEMS_V051", filename, slides });
+      figma.ui.postMessage({ type: "BATCH_BG_AND_ITEMS_V051", filename, slides, format: msg.format || "pptx" });
       postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
       return;
     }
