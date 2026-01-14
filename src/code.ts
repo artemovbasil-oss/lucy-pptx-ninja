@@ -83,7 +83,7 @@ type ExportText = {
   text: string; fontFamily: string; fontSize: number;
   lineHeightPx?: number | null; color: string;
   align: "left" | "center" | "right" | "justify";
-  opacity: number; bold: boolean; italic: boolean;
+  opacity: number; bold: boolean; italic: boolean; uppercase: boolean;
 };
 
 type ExportShape =
@@ -160,6 +160,18 @@ function getFirstCharFontStyleFlags(tn: TextNode): { bold: boolean; italic: bool
     };
   } catch { return { bold: false, italic: false }; }
 }
+function getIsUppercase(tn: TextNode): boolean {
+  try {
+    const len = tn.characters?.length ?? 0;
+    if (len === 0) return false;
+    const tc = tn.getRangeTextCase(0, 1) as TextCase;
+    return tc === "UPPER";
+  } catch {
+    const tc = (tn as any).textCase as TextCase | PluginAPI["mixed"] | undefined;
+    if (!tc || tc === figma.mixed) return false;
+    return tc === "UPPER";
+  }
+}
 function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   try {
     const lh = tn.lineHeight;
@@ -181,6 +193,12 @@ function hasAnyEffects(node: SceneNode): boolean {
   const eff = (node as any).effects;
   if (!eff || eff === figma.mixed) return true;
   return (eff as readonly Effect[]).length > 0;
+}
+function hasBlendMode(node: SceneNode): boolean {
+  if (!("blendMode" in node)) return false;
+  const bm = (node as any).blendMode;
+  if (!bm || bm === figma.mixed) return true;
+  return bm !== "NORMAL";
 }
 function hasImageFill(node: SceneNode): boolean {
   if (!("fills" in node)) return false;
@@ -279,6 +297,10 @@ function isNearFullFrame(node: SceneNode, frame: FrameNode): boolean {
 function shouldRasterOverlay(node: SceneNode, frame: FrameNode): boolean {
   if (!("visible" in node) || (node as any).visible === false) return false;
   if (node.type === "TEXT") return false;
+  if (hasBlendMode(node)) {
+    if (isContainer(node) && containsTextDescendant(node)) return false;
+    return true;
+  }
 
   if (hasImageFill(node) && isNearFullFrame(node, frame)) return false;
   if (hasImageFill(node)) return true;
@@ -326,6 +348,9 @@ function getSmartBackground(frame: FrameNode): { fill: string; opacity: number }
 // ---- Masks ----
 function isRectMaskNode(n: SceneNode): n is RectangleNode {
   return n.type === "RECTANGLE" && (n as any).isMask === true;
+}
+function isMaskNode(n: SceneNode): boolean {
+  return (n as any).isMask === true;
 }
 function rectHasImageFill(r: RectangleNode): boolean {
   const fills = r.fills;
@@ -440,80 +465,150 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
   const consumedMaskIds = new Set<string>();
   const consumedMaskedContentIds = new Set<string>();
 
-  async function tryExtractMaskPairsInContainer(container: SceneNode) {
-    if (!("children" in container)) return;
+  async function tryExtractMaskPairsInContainer(container: SceneNode): Promise<boolean> {
+    if (!("children" in container)) return false;
 
     const ch = (container.children as readonly SceneNode[]).filter((n) => ("visible" in n ? (n as any).visible !== false : true));
-    if (ch.length < 2) return;
+    if (ch.length < 2) return false;
 
     const first = ch[0];
     const second = ch[1];
 
-    if (!isRectMaskNode(first)) return;
-    if (second.type !== "RECTANGLE") return;
+    if (!isMaskNode(first)) return false;
 
-    const mask = first as RectangleNode;
-    const img = second as RectangleNode;
+    const maskNode = first;
+    const contentNode = second;
 
-    if (!isSafeMaskPair(mask, img)) return;
+    if (isRectMaskNode(maskNode) && contentNode.type === "RECTANGLE") {
+      const mask = maskNode as RectangleNode;
+      const img = contentNode as RectangleNode;
 
-    const maskR = rectRelativeToFrame(mask, frame);
-    const imgR = rectRelativeToFrame(img, frame);
-    const maskRadius = getCornerRadiusAny(mask);
+      if (!isSafeMaskPair(mask, img)) return false;
 
-    if (maskRadius > 0.5) {
-      postProgress("export", idx - 1, total, `Mask (rounded): ${frame.name}`, `Rasterizing rounded mask…`);
-      const contRect = rectRelativeToFrame(container, frame);
-      const bytes = await rasterizeNodePNG(container, 2);
+      const maskR = rectRelativeToFrame(mask, frame);
+      const imgR = rectRelativeToFrame(img, frame);
+      const maskRadius = getCornerRadiusAny(mask);
+
+      if (maskRadius > 0.5) {
+        postProgress("export", idx - 1, total, `Mask (rounded): ${frame.name}`, `Rasterizing rounded mask…`);
+        const contRect = rectRelativeToFrame(container, frame);
+        const bytes = await rasterizeNodePNG(container, 2);
+
+        z += 1;
+        const zVal = z;
+
+        items.push({
+          kind: "raster",
+          z: zVal,
+          id: `roundedMask__${container.id}`,
+          x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
+          pngBytes: Array.from(bytes)
+        });
+
+        markHide(container);
+        consumedMaskIds.add(mask.id);
+        consumedMaskedContentIds.add(img.id);
+        return true;
+      }
+
+      postProgress("export", idx - 1, total, `Mask image: ${frame.name}`, `Exporting masked image…`);
+      const imgBytes = await rasterizeNodePNG(img, 2);
+      const crop = cropFromMaskAndImage(maskR, imgR);
 
       z += 1;
       const zVal = z;
+      zById.set(mask.id, zVal);
+      zById.set(img.id, zVal);
 
       items.push({
-        kind: "raster",
+        kind: "maskedImage",
         z: zVal,
-        id: `roundedMask__${container.id}`,
-        x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
-        pngBytes: Array.from(bytes)
+        id: `${mask.id}__${img.id}`,
+        x: maskR.x, y: maskR.y, w: maskR.w, h: maskR.h,
+        pngBytes: Array.from(imgBytes),
+        crop
       });
 
-      markHide(container);
       consumedMaskIds.add(mask.id);
       consumedMaskedContentIds.add(img.id);
-      return;
+
+      markHide(mask);
+      markHide(img);
+      return true;
     }
 
-    postProgress("export", idx - 1, total, `Mask image: ${frame.name}`, `Exporting masked image…`);
-    const imgBytes = await rasterizeNodePNG(img, 2);
-    const crop = cropFromMaskAndImage(maskR, imgR);
+    postProgress("export", idx - 1, total, `Mask group: ${frame.name}`, `Rasterizing masked content…`);
+    const contRect = rectRelativeToFrame(container, frame);
+    const bytes = await rasterizeNodePNG(container, 2);
 
     z += 1;
     const zVal = z;
-    zById.set(mask.id, zVal);
-    zById.set(img.id, zVal);
 
     items.push({
-      kind: "maskedImage",
+      kind: "raster",
       z: zVal,
-      id: `${mask.id}__${img.id}`,
-      x: maskR.x, y: maskR.y, w: maskR.w, h: maskR.h,
-      pngBytes: Array.from(imgBytes),
-      crop
+      id: `maskGroup__${container.id}`,
+      x: contRect.x, y: contRect.y, w: contRect.w, h: contRect.h,
+      pngBytes: Array.from(bytes)
     });
 
-    consumedMaskIds.add(mask.id);
-    consumedMaskedContentIds.add(img.id);
-
-    markHide(mask);
-    markHide(img);
+    markHide(container);
+    return true;
   }
 
-  async function walk(node: SceneNode) {
+  function addTextItem(tn: TextNode) {
+    const r = rectRelativeToFrame(tn, frame);
+    const flags = getFirstCharFontStyleFlags(tn);
+    const fs = getFirstCharFontSize(tn);
+
+    z += 1;
+    zById.set(tn.id, z);
+
+    items.push({
+      kind: "text",
+      z,
+      id: tn.id,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      text: tn.characters ?? "",
+      fontFamily: getFirstCharFontFamily(tn),
+      fontSize: fs,
+      lineHeightPx: getTextLineHeightPx(tn, fs),
+      color: getFirstCharFillHex(tn),
+      align: alignMap(tn.textAlignHorizontal),
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: flags.bold,
+      italic: flags.italic,
+      uppercase: getIsUppercase(tn)
+    });
+
+    markHide(tn);
+  }
+
+  async function walk(node: SceneNode, textOnly = false) {
     if (!("visible" in node) || (node as any).visible === false) return;
     if (cancelRequested) return;
 
+    if (textOnly && node.type !== "TEXT") {
+      if ("children" in node) {
+        for (const ch of node.children as readonly SceneNode[]) {
+          await walk(ch as SceneNode, true);
+          if (cancelRequested) return;
+        }
+      }
+      return;
+    }
+
     if (node.id !== frame.id && isContainer(node)) {
-      await tryExtractMaskPairsInContainer(node);
+      const handledMask = await tryExtractMaskPairsInContainer(node);
+      if (handledMask) {
+        if ("children" in node) {
+          for (const ch of node.children as readonly SceneNode[]) {
+            await walk(ch as SceneNode, true);
+            if (cancelRequested) return;
+          }
+        }
+        return;
+      }
     }
 
     if (node.id !== frame.id) {
@@ -524,6 +619,29 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
 
       // 2) Container BG as editable shape (solid)
       if (node.type === "FRAME" || node.type === "INSTANCE" || node.type === "COMPONENT") {
+        if ("clipsContent" in node && (node as FrameNode).clipsContent === true) {
+          const r = rectRelativeToFrame(node, frame);
+          postProgress("export", idx - 1, total, `Clipped frame: ${frame.name}`, `Rasterizing clipped content…`);
+          const bytes = await rasterizeContainerBackgroundOnly(node, 2);
+
+          items.push({
+            kind: "raster",
+            z,
+            id: `clippedFrame__${node.id}`,
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            pngBytes: Array.from(bytes)
+          });
+
+          markHide(node);
+          if ("children" in node) {
+            for (const ch of node.children as readonly SceneNode[]) {
+              await walk(ch as SceneNode, true);
+              if (cancelRequested) return;
+            }
+          }
+          return;
+        }
+
         if (isSafeContainerBg(node)) {
           const r = rectRelativeToFrame(node, frame);
           const fill = getSolidFill(node);
@@ -592,27 +710,7 @@ async function exportOneFrame(frame: FrameNode, idx: number, total: number): Pro
       // 3) Text
       if (node.type === "TEXT") {
         const tn = node as TextNode;
-        const r = rectRelativeToFrame(tn, frame);
-        const flags = getFirstCharFontStyleFlags(tn);
-        const fs = getFirstCharFontSize(tn);
-
-        items.push({
-          kind: "text",
-          z,
-          id: tn.id,
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          text: tn.characters ?? "",
-          fontFamily: getFirstCharFontFamily(tn),
-          fontSize: fs,
-          lineHeightPx: getTextLineHeightPx(tn, fs),
-          color: getFirstCharFillHex(tn),
-          align: alignMap(tn.textAlignHorizontal),
-          opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-          bold: flags.bold,
-          italic: flags.italic
-        });
-
-        markHide(tn);
+        addTextItem(tn);
         return;
       }
 
