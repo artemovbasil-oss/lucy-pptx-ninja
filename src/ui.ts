@@ -7,8 +7,6 @@ const UI_HIGHLIGHT = "Section export";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
-const refreshBtn = document.getElementById("refresh") as HTMLButtonElement;
-
 const statusEl = document.getElementById("status") as HTMLDivElement;
 const barEl = document.getElementById("bar") as HTMLDivElement;
 // main progress percent is intentionally hidden (we show a bar + label instead)
@@ -143,6 +141,7 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 }
 
 let isBusy = false;
+let uiCancelRequested = false;
 
 function showBusyOverlay(show: boolean) {
   if (!busyOverlayEl) return;
@@ -164,7 +163,6 @@ function setBusy(next: boolean, ctaLabel?: string) {
   setState(next ? "processing" : "idle");
 
   exportBtn.disabled = next;
-  refreshBtn.disabled = next;
 
   if (ctaTextEl) ctaTextEl.textContent = ctaLabel || (next ? "Exporting…" : "Export PPTX");
   if (next) exportBtn.classList.add("isLoading");
@@ -268,11 +266,6 @@ function renderList(frames: FrameInfo[]) {
   }
 }
 
-refreshBtn.onclick = () => {
-  if (isBusy) return;
-  parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");
-};
-
 exportBtn.onclick = () => {
   if (isBusy) return;
 
@@ -282,6 +275,7 @@ exportBtn.onclick = () => {
     return;
   }
 
+  uiCancelRequested = false;
   setBusy(true, "Exporting…");
   setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
   parent.postMessage({ pluginMessage: { type: "EXPORT_PPTX_ORDERED", frameIds: ids } }, "*");
@@ -289,6 +283,7 @@ exportBtn.onclick = () => {
 
 cancelBtn?.addEventListener('click', () => {
   if (!isBusy) return;
+  uiCancelRequested = true;
   setProgress("cancel", 0, 1, "Cancelling…", "Stopping export…");
   parent.postMessage({ pluginMessage: { type: "CANCEL_EXPORT" } }, "*");
 });
@@ -296,6 +291,7 @@ cancelBtn?.addEventListener('click', () => {
 // Overlay Cancel (only in overlay)
 overlayCancelBtn?.addEventListener('click', () => {
   if (!isBusy) return;
+  uiCancelRequested = true;
   setProgress('cancel', 0, 1, 'Cancelling…', 'Stopping export…');
   parent.postMessage({ pluginMessage: { type: 'CANCEL_EXPORT' } }, '*');
 });
@@ -330,6 +326,7 @@ function formatFontsUsed(fonts: Set<string>) {
 }
 
 async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
   const targetWpx = Math.max(...slides.map((s) => s.width));
   const targetHpx = Math.max(...slides.map((s) => s.height));
 
@@ -340,6 +337,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   const fontsUsed = new Set<string>();
 
   for (let si = 0; si < slides.length; si++) {
+    if (uiCancelRequested) throw new Error("CANCELLED_UI");
     const sd = slides[si];
     setProgress("pptx", si, slides.length, `Building slide ${si + 1}/${slides.length}`, sd.name);
 
@@ -376,6 +374,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
     const items = (sd.items || []).slice().sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
 
     for (const it of items) {
+      if (uiCancelRequested) throw new Error("CANCELLED_UI");
       const sx = (v: number) => trf.ox + v * trf.s;
       const sy = (v: number) => trf.oy + v * trf.s;
       const sw = (v: number) => v * trf.s;
@@ -466,7 +465,10 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
         const fontFace = mapFontFamily(it.fontFamily);
         fontsUsed.add(fontFace);
 
-        slide.addText(String(it.text), {
+        const rawText = String(it.text);
+        const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
+
+        slide.addText(finalText, {
           x: pxToIn(xPx),
           y: pxToIn(yPx),
           w: pxToIn(wPx),
@@ -488,6 +490,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
   }
 
   setProgress("pptx", slides.length, slides.length, "Writing file…", "Finalizing PPTX…");
+  if (uiCancelRequested) throw new Error("CANCELLED_UI");
   const arrayBuffer = await pptx.write("arraybuffer");
   const outBytes = new Uint8Array(arrayBuffer as ArrayBuffer);
 
@@ -537,6 +540,7 @@ window.onmessage = async (event) => {
   if (msg.type === "CANCELLED") {
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
+    uiCancelRequested = false;
     return;
   }
 
@@ -551,8 +555,16 @@ window.onmessage = async (event) => {
     }
     try {
       await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+    } catch (err: any) {
+      if (err?.message === "CANCELLED_UI") {
+        setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
+        setState("idle");
+        return;
+      }
+      throw err;
     } finally {
       setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
     }
     return;
   }
@@ -568,8 +580,16 @@ window.onmessage = async (event) => {
     }
     try {
       await buildPptxFromSlides(msg.filename ?? "Lucy_batch.pptx", slides);
+    } catch (err: any) {
+      if (err?.message === "CANCELLED_UI") {
+        setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
+        setState("idle");
+        return;
+      }
+      throw err;
     } finally {
       setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
     }
     return;
   }
