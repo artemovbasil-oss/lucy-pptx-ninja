@@ -969,3 +969,12 @@ function setupSegmented(groupEl: HTMLDivElement | null, fallback: string) {
 
 setupSegmented(formatSelect, "pptx");
 setupSegmented(qualitySelect, "best");
+
+function updateExportLabel() {
+  if (!ctaTextEl) return;
+  const format = getSegmentedValue(formatSelect, "pptx");
+  ctaTextEl.textContent = format === "pdf" ? "Export PDF" : "Export PPTX";
+}
+
+formatSelect?.addEventListener("click", updateExportLabel);
+updateExportLabel();

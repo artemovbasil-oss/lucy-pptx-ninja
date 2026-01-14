@@ -1,5 +1,5 @@
 // src/code.ts (v0.5.3-dev) — adds: gradient RECTANGLE raster (big pills) + keeps previous fixes
-figma.showUI(__html__, { width: 360, height: 520 });
+figma.showUI(__html__, { width: 360, height: 600 });
 
 function postStatus(text: string) { figma.ui.postMessage({ type: "STATUS", text }); }
 function postError(text: string) { figma.ui.postMessage({ type: "ERROR", text }); }
