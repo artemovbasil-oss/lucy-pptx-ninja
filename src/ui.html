@@ -5,19 +5,15 @@
     <title>Lucy — PPTX Ninja</title>
     <style>
       :root {
-        --bg: #0b0b0c;
-        --panel: #121215;
-        --panel2: #16161a;
-        --text: #e9e9ee;
-        --muted: #a7a7b3;
-        --line: #2a2a30;
-
+        --bg: #0f0f13;
+        --text: #f1f1f4;
+        --muted: #a2a4ad;
+        --line: rgba(255,255,255,0.08);
         --accent: #85CDDB;
-        --accent-2: rgba(133, 205, 219, 0.25);
+        --accent-2: rgba(133, 205, 219, 0.22);
         --shadow: rgba(0, 0, 0, 0.35);
-
-        --r: 12px;
-        --r2: 10px;
+        --r: 16px;
+        --r2: 12px;
         --ease: cubic-bezier(.2,.8,.2,1);
       }
 
@@ -31,28 +27,59 @@
       * { box-sizing: border-box; }
 
       .wrap {
-        padding: 12px;
+        padding: 16px 16px 76px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
         min-height: 100vh;
       }
 
       .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-      .title { font-weight: 800; letter-spacing: .2px; font-size: 13px; }
-      .subtitle { color: var(--muted); margin-top: 2px; }
+      .title { font-weight: 700; letter-spacing: .2px; font-size: 14px; }
+      .subtitle { color: var(--muted); margin-top: 2px; font-size: 11px; }
 
       .card {
-        background: linear-gradient(180deg, var(--panel), var(--panel2));
-        border: 1px solid var(--line);
-        border-radius: var(--r);
-        padding: 10px;
-        box-shadow: 0 8px 24px var(--shadow);
+        background: #17171c;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 16px;
+        padding: 12px;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+        transition: transform .2s var(--ease), box-shadow .2s var(--ease);
       }
 
-      .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-      .label { font-weight: 800; letter-spacing: .2px; }
-      .hint { color: var(--muted); }
+      .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+      .label { font-weight: 600; letter-spacing: .2px; font-size: 12px; }
+      .hint { color: var(--muted); font-size: 11px; }
+      .fieldRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+      .fieldLabel { color: var(--muted); font-size: 11px; min-width: 64px; }
+      .segmented {
+        flex: 1;
+        display: grid;
+        grid-auto-flow: column;
+        gap: 6px;
+        padding: 4px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+      .segment {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        padding: 6px 10px;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: color .18s var(--ease), background .18s var(--ease), transform .18s var(--ease), box-shadow .18s var(--ease);
+      }
+      .segment:hover { color: var(--text); }
+      .segment.isActive {
+        color: #052f36;
+        background: linear-gradient(180deg, #8fd7e3, #6fc3d4);
+        box-shadow: 0 6px 16px rgba(133,205,219,0.25);
+      }
+      .segment:active { transform: translateY(1px); }
 
       /* Buttons */
       .btn {
@@ -75,23 +102,12 @@
         border-color: rgba(133,205,219,0.9);
       }
 
-      .btnIcon {
-        width: 34px;
-        height: 34px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        border-radius: 10px;
-      }
-      .btnIcon svg { width: 16px; height: 16px; opacity: .9; }
-
       .btnPrimary {
         border-color: transparent;
         background: linear-gradient(180deg, #8fd7e3, #6fc3d4);
-        color: #06262b;
-        font-weight: 900;
-        box-shadow: 0 10px 24px rgba(133,205,219,0.18), inset 0 1px 0 rgba(255,255,255,0.35);
+        color: #052f36;
+        font-weight: 700;
+        box-shadow: 0 12px 28px rgba(133,205,219,0.22), inset 0 1px 0 rgba(255,255,255,0.35);
       }
       .btnPrimary:hover {
         border-color: transparent;
@@ -134,7 +150,7 @@
       /* Progress */
       .progress {
         height: 8px;
-        background: rgba(0,0,0,0.35);
+        background: rgba(255,255,255,0.04);
         border: 1px solid var(--line);
         border-radius: 999px;
         overflow: hidden;
@@ -172,21 +188,45 @@
       .list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
       .item {
         display: grid;
-        grid-template-columns: 18px 1fr auto;
+        grid-template-columns: 18px 44px 1fr auto;
         align-items: center;
         gap: 10px;
-        padding: 9px 10px;
-        border: 1px solid var(--line);
+        padding: 10px 12px;
+        border: 1px solid rgba(255,255,255,0.06);
         border-radius: var(--r2);
-        background: rgba(0,0,0,0.20);
-        transition: border-color .18s var(--ease), transform .08s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
+        background: rgba(255,255,255,0.02);
+        transition: border-color .18s var(--ease), transform .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
       }
-      .item:hover { border-color: rgba(133,205,219,0.35); box-shadow: 0 0 0 3px rgba(133,205,219,0.10); }
-      .item:active { transform: translateY(1px); }
+      .item:hover { border-color: rgba(133,205,219,0.35); box-shadow: 0 6px 20px rgba(0,0,0,0.28); transform: translateY(-1px); }
+      .item:active { transform: translateY(0); }
 
       .handle {
         width: 18px; height: 18px; display:flex; align-items:center; justify-content:center;
         color: var(--muted); cursor: grab; user-select: none; opacity: .9;
+      }
+      .thumb {
+        width: 44px;
+        height: 28px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.03);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .thumbEmpty::after {
+        content: "";
+        width: 16px;
+        height: 10px;
+        border-radius: 3px;
+        background: rgba(255,255,255,0.12);
       }
       .name { font-weight: 800; }
       .meta { color: var(--muted); font-size: 11px; }
@@ -202,11 +242,20 @@
       /* Locked interactions while loading */
       .locked { opacity: .92; }
       .locked .item { pointer-events: none; opacity: .8; }
-      .locked #refresh { pointer-events: none; opacity: .65; }
       .locked .handle { cursor: default; }
 
       /* Footer */
-      .footer { margin-top: auto; padding-top: 6px; display: flex; gap: 8px; }
+      .footer {
+        position: sticky;
+        bottom: 0;
+        margin-top: auto;
+        padding: 10px 0 6px;
+        display: flex;
+        gap: 8px;
+        background: var(--bg);
+        box-shadow: 0 -12px 24px rgba(0,0,0,0.25);
+        z-index: 3;
+      }
       .cta { flex: 1; height: 40px; border-radius: 12px; }
       .cancel { width: 92px; height: 40px; border-radius: 12px; display: none; }
       .showCancel .cancel { display: inline-flex; align-items: center; justify-content: center; }
@@ -269,7 +318,35 @@
       .busyText { text-align: center; }
       .busyTitle { font-weight: 900; letter-spacing: .2px; }
       .busyHint { margin-top: 4px; color: var(--muted); }
-      .overlayCancel { width: 100%; }
+      .overlayCancel {
+        width: 54px;
+        height: 54px;
+        border-radius: 999px;
+        border: 2px solid rgba(248, 113, 113, 0.4);
+        background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16), rgba(248,113,113,0.18));
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: transform .12s var(--ease), box-shadow .18s var(--ease), border-color .18s var(--ease);
+      }
+      .overlayCancel svg {
+        width: 22px;
+        height: 22px;
+        stroke: #F87171;
+        stroke-width: 2.4;
+        stroke-linecap: round;
+      }
+      .overlayCancel:hover {
+        border-color: rgba(248, 113, 113, 0.8);
+        box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.15);
+        transform: translateY(-1px);
+      }
+      .overlayCancel:active { transform: translateY(0) scale(0.98); }
+      .overlayCancel:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.2), 0 0 0 1px rgba(248, 113, 113, 0.6) inset;
+      }
     </style>
   </head>
 
@@ -278,7 +355,7 @@
       <div class="header">
         <div>
           <div class="title">Lucy — PPTX Ninja</div>
-          <div class="subtitle" id="version">v0.5 · Section export</div>
+          <div class="subtitle" id="version">v0.6 · Batch export + PDF</div>
         </div>
       </div>
 
@@ -298,19 +375,36 @@
         <div id="status" class="status">Select one or more frames.</div>
       </div>
 
+      <div class="card">
+        <div class="cardHeader">
+          <div class="label">Export</div>
+          <div class="hint">Format & quality</div>
+        </div>
+
+        <div class="fieldRow">
+          <div class="fieldLabel">Format</div>
+          <div id="formatSelect" class="segmented" role="group" aria-label="Export format">
+            <button class="segment isActive" data-value="pptx" type="button">PPTX</button>
+            <button class="segment" data-value="pdf" type="button">PDF</button>
+          </div>
+        </div>
+
+        <div class="fieldRow">
+          <div class="fieldLabel">Quality</div>
+          <div id="qualitySelect" class="segmented" role="group" aria-label="Export quality">
+            <button class="segment isActive" data-value="best" type="button">Best</button>
+            <button class="segment" data-value="medium" type="button">Medium</button>
+            <button class="segment" data-value="low" type="button">Low</button>
+          </div>
+        </div>
+      </div>
+
       <div class="card" id="slidesCard">
         <div class="cardHeader">
           <div>
             <div class="label">Slides order</div>
             <div class="hint">Drag to reorder. Export will follow this order.</div>
           </div>
-
-          <button id="refresh" class="btn btnIcon" title="Refresh selection" aria-label="Refresh selection">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              <path d="M20 4v6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
         </div>
 
         <div id="list" class="list"></div>
@@ -337,7 +431,11 @@
           <div class="busyTitle">Exporting…</div>
           <div id="overlayHint" class="busyHint">Lucy is converting your slides</div>
         </div>
-        <button id="overlayCancel" class="btn btnDanger overlayCancel">Cancel</button>
+        <button id="overlayCancel" class="overlayCancel" aria-label="Cancel export">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
     </div>
 
