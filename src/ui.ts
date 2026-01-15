@@ -8,11 +8,11 @@ const UI_HIGHLIGHT = "Batch export + PDF";
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
 const statusEl = document.getElementById("status") as HTMLDivElement;
-const barEl = document.getElementById("bar") as HTMLDivElement;
+const barEl = document.getElementById("bar") as HTMLDivElement | null;
 // main progress percent is intentionally hidden (we show a bar + label instead)
 const pctEl = document.getElementById("pct") as HTMLDivElement | null;
-const progTextEl = document.getElementById("progText") as HTMLDivElement;
-const stateDotEl = document.getElementById("stateDot") as HTMLDivElement;
+const progTextEl = document.getElementById("progText") as HTMLDivElement | null;
+const stateDotEl = document.getElementById("stateDot") as HTMLDivElement | null;
 
 const listEl = document.getElementById("list") as HTMLDivElement;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
@@ -25,8 +25,6 @@ const versionEl = document.getElementById("version") as HTMLDivElement | null;
 
 // Busy overlay elements
 const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
-// Overlay uses a ring indicator (no numeric percent)
-const ringEl = document.querySelector(".ring") as HTMLDivElement | null;
 const overlayHintEl = document.getElementById("overlayHint") as HTMLDivElement | null;
 const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonElement | null;
 
@@ -135,11 +133,10 @@ function setProgress(phase: string, current: number, total: number, label?: stri
   const c = clamp(current, 0, t);
   const p = Math.round((c / t) * 100);
 
-  barEl.style.width = `${p}%`;
+  if (barEl) barEl.style.width = `${p}%`;
   if (pctEl) pctEl.textContent = "";
-  if (isBusy && ringEl) ringEl.style.setProperty("--p", String(p));
   if (isBusy && overlayHintEl && phase) overlayHintEl.textContent = String(phase);
-  progTextEl.textContent = label ? label : `${c}/${t}`;
+  if (progTextEl) progTextEl.textContent = label ? label : `${c}/${t}`;
   if (text) setStatus(text);
 }
 
@@ -151,7 +148,6 @@ function showBusyOverlay(show: boolean) {
   if (show) {
     busyOverlayEl.classList.add("show");
     busyOverlayEl.setAttribute("aria-hidden", "false");
-    if (ringEl) ringEl.style.setProperty("--p", "0");
   } else {
     busyOverlayEl.classList.remove("show");
     busyOverlayEl.setAttribute("aria-hidden", "true");
