@@ -11,16 +11,15 @@ Built by designers, for designers.
 
 ---
 
-## v0.6 update
+## v0.7 update
 
-Lucy just got a v0.6 update 🚀
+Lucy just got a v0.7 update 🚀
 
-She can now export not only PPTX, but also PDF — which makes handoff to clients much easier.
+We focused on polishing the UI and improving PPTX export reliability.
 
 What’s new:
-- Section export: select a whole section in Figma and Lucy will try to arrange slides in the correct order automatically
-- If the order isn’t perfect — no problem. You can reorder slides via drag & drop, and it’s now much nicer because the list includes slide thumbnails
-- Quality / file size control: tune the export depending on whether you need lightweight files or maximum visual fidelity
+- UI polish: updated loading flow, progress feedback, and format-based accents for a clearer export state
+- PPTX export fixes: improved handling of clipped backgrounds and wide pill shapes for better slide fidelity
 
 Still building Lucy in public, step by step.  
 Try it out, break it, and let me know what you think 👀

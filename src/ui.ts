@@ -2,7 +2,7 @@
 import PptxGenJS from "pptxgenjs";
 
 // Keep these in sync with your release notes
-const UI_VERSION = "v0.6";
+const UI_VERSION = "v0.7";
 const UI_HIGHLIGHT = "Batch export + PDF";
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
