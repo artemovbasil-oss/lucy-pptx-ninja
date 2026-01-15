@@ -11,6 +11,7 @@
         --line: rgba(255,255,255,0.08);
         --accent: #85CDDB;
         --accent-2: rgba(133, 205, 219, 0.22);
+        --accent-rgb: 133, 205, 219;
         --shadow: rgba(0, 0, 0, 0.35);
         --r: 16px;
         --r2: 12px;
@@ -20,6 +21,7 @@
       html.formatPdf {
         --accent: #F2D45C;
         --accent-2: rgba(242, 212, 92, 0.25);
+        --accent-rgb: 242, 212, 92;
       }
 
       html, body {
@@ -84,8 +86,8 @@
       .segment:hover { color: var(--text); }
       .segment.isActive {
         color: #052f36;
-        background: linear-gradient(180deg, #8fd7e3, #6fc3d4);
-        box-shadow: 0 6px 16px rgba(133,205,219,0.25);
+        background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.95), rgba(var(--accent-rgb), 0.8));
+        box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.25);
       }
       .segment:active { transform: translateY(1px); }
 
@@ -102,25 +104,25 @@
         transition: transform .08s var(--ease), border-color .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease), filter .18s var(--ease);
       }
 
-      .btn:hover { border-color: rgba(133,205,219,0.55); box-shadow: 0 0 0 3px var(--accent-2); }
+      .btn:hover { border-color: rgba(var(--accent-rgb), 0.55); box-shadow: 0 0 0 3px var(--accent-2); }
       .btn:active { transform: translateY(1px) scale(0.99); }
       .btn:focus-visible {
         outline: none;
-        box-shadow: 0 0 0 3px var(--accent-2), 0 0 0 1px rgba(133,205,219,0.8) inset;
-        border-color: rgba(133,205,219,0.9);
+        box-shadow: 0 0 0 3px var(--accent-2), 0 0 0 1px rgba(var(--accent-rgb), 0.8) inset;
+        border-color: rgba(var(--accent-rgb), 0.9);
       }
 
       .btnPrimary {
         border-color: transparent;
-        background: linear-gradient(180deg, #8fd7e3, #6fc3d4);
+        background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.95), rgba(var(--accent-rgb), 0.8));
         color: #052f36;
         font-weight: 700;
-        box-shadow: 0 12px 28px rgba(133,205,219,0.22), inset 0 1px 0 rgba(255,255,255,0.35);
+        box-shadow: 0 12px 28px rgba(var(--accent-rgb), 0.22), inset 0 1px 0 rgba(255,255,255,0.35);
       }
       .btnPrimary:hover {
         border-color: transparent;
-        background: linear-gradient(180deg, #9de0eb, #7ccddb);
-        box-shadow: 0 12px 26px rgba(133,205,219,0.22), 0 0 0 3px rgba(133,205,219,0.18);
+        background: linear-gradient(180deg, rgba(var(--accent-rgb), 1), rgba(var(--accent-rgb), 0.85));
+        box-shadow: 0 12px 26px rgba(var(--accent-rgb), 0.22), 0 0 0 3px rgba(var(--accent-rgb), 0.18);
       }
       .btnPrimary:active { transform: translateY(1px) scale(0.99); filter: brightness(0.98); }
 
@@ -154,10 +156,10 @@
       .bar {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, rgba(133,205,219,0.6), rgba(133,205,219,1));
+        background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 1));
         border-radius: inherit;
         transition: width .35s cubic-bezier(.4, 0, .2, 1);
-        box-shadow: 0 0 14px rgba(133,205,219,0.35);
+        box-shadow: 0 0 14px rgba(var(--accent-rgb), 0.35);
         position: relative;
         overflow: hidden;
       }
@@ -192,7 +194,7 @@
       .stateDot.idle { background: rgba(167,167,179,0.65); }
       .stateDot.processing {
         background: var(--accent);
-        box-shadow: 0 0 10px rgba(133,205,219,0.45);
+        box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.45);
       }
       .stateDot.success {
         background: #6EE7B7;
@@ -217,7 +219,7 @@
         background: rgba(255,255,255,0.02);
         transition: border-color .18s var(--ease), transform .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
       }
-      .item:hover { border-color: rgba(133,205,219,0.35); box-shadow: 0 6px 20px rgba(0,0,0,0.28); transform: translateY(-1px); }
+      .item:hover { border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 6px 20px rgba(0,0,0,0.28); transform: translateY(-1px); }
       .item:active { transform: translateY(0); }
 
       .handle {
@@ -253,11 +255,11 @@
 
       .item.dragging {
         opacity: .65;
-        border-color: rgba(133,205,219,0.55);
-        box-shadow: 0 10px 26px rgba(0,0,0,0.35), 0 0 0 3px rgba(133,205,219,0.14);
+        border-color: rgba(var(--accent-rgb), 0.55);
+        box-shadow: 0 10px 26px rgba(0,0,0,0.35), 0 0 0 3px rgba(var(--accent-rgb), 0.14);
         transform: scale(0.995);
       }
-      .item.over { outline: 1px dashed rgba(133,205,219,0.85); outline-offset: 2px; background: rgba(133,205,219,0.06); }
+      .item.over { outline: 1px dashed rgba(var(--accent-rgb), 0.85); outline-offset: 2px; background: rgba(var(--accent-rgb), 0.06); }
 
       /* Locked interactions while loading */
       .locked { opacity: .92; }
