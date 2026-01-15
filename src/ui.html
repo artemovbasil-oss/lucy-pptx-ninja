@@ -313,45 +313,39 @@
         gap: 12px;
       }
 
-      .ringWrap { width: 92px; height: 92px; display:flex; align-items:center; justify-content:center; }
-      .ring {
-        width: 92px;
-        height: 92px;
+      .ringWrap { width: 120px; height: 92px; display:flex; align-items:center; justify-content:center; }
+      .deckLoader {
         position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        animation: ringSpin 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
+        width: 96px;
+        height: 64px;
+        perspective: 600px;
       }
-      .ringShape {
+      .deckSlide {
         position: absolute;
-        width: 18px;
-        height: 18px;
-        border-radius: 6px;
-        background: linear-gradient(135deg, rgba(133,205,219,0.95), rgba(133,205,219,0.5));
-        box-shadow: 0 0 16px rgba(133,205,219,0.35);
-        animation: ringPulse 1.6s ease-in-out infinite;
-      }
-      .ringShape1 { top: 8px; left: 50%; transform: translateX(-50%); animation-delay: 0s; }
-      .ringShape2 { right: 8px; top: 50%; transform: translateY(-50%); animation-delay: .2s; }
-      .ringShape3 { bottom: 8px; left: 50%; transform: translateX(-50%); animation-delay: .4s; }
-      .ringShape4 { left: 8px; top: 50%; transform: translateY(-50%); animation-delay: .6s; }
-      .ringCore {
-        width: 14px;
-        height: 14px;
-        border-radius: 4px;
-        background: rgba(133,205,219,0.25);
+        left: 10px;
+        width: 76px;
+        height: 48px;
+        border-radius: 10px;
         border: 1px solid rgba(133,205,219,0.35);
-        animation: ringCorePulse 1.6s ease-in-out infinite;
+        background: linear-gradient(160deg, rgba(133,205,219,0.24), rgba(133,205,219,0.08));
+        box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+        transform-origin: center bottom;
+        animation: deckFlip 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
       }
-      @keyframes ringSpin { to { transform: rotate(360deg); } }
-      @keyframes ringPulse {
-        0%, 100% { transform: scale(1); opacity: .95; }
-        50% { transform: scale(.55) rotate(45deg); opacity: .55; }
+      .deckSlide::after {
+        content: "";
+        position: absolute;
+        inset: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(133,205,219,0.35);
+        background: rgba(133,205,219,0.06);
       }
-      @keyframes ringCorePulse {
-        0%, 100% { transform: scale(.8); opacity: .6; }
-        50% { transform: scale(1); opacity: .95; }
+      .deckSlide1 { top: 8px; transform: translateY(12px) scale(.96); opacity: .55; animation-delay: 0s; }
+      .deckSlide2 { top: 2px; transform: translateY(6px) scale(.98); opacity: .75; animation-delay: .2s; }
+      .deckSlide3 { top: 0; transform: translateY(0) scale(1); opacity: 1; animation-delay: .4s; }
+      @keyframes deckFlip {
+        0%, 100% { transform: translateY(0) scale(1) rotateX(0deg); box-shadow: 0 10px 22px rgba(0,0,0,0.35); }
+        50% { transform: translateY(-8px) scale(1.02) rotateX(12deg); box-shadow: 0 16px 26px rgba(0,0,0,0.45); }
       }
 
       .busyText { text-align: center; }
@@ -469,12 +463,10 @@
     <div id="busyOverlay" class="busyOverlay" aria-hidden="true">
       <div class="busyCard" role="dialog" aria-label="Exporting">
         <div class="ringWrap">
-          <div class="ring" aria-hidden="true">
-            <span class="ringShape ringShape1"></span>
-            <span class="ringShape ringShape2"></span>
-            <span class="ringShape ringShape3"></span>
-            <span class="ringShape ringShape4"></span>
-            <span class="ringCore"></span>
+          <div class="deckLoader" aria-hidden="true">
+            <span class="deckSlide deckSlide1"></span>
+            <span class="deckSlide deckSlide2"></span>
+            <span class="deckSlide deckSlide3"></span>
           </div>
         </div>
         <div class="busyText">
