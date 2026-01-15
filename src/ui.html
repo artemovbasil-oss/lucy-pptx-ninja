@@ -139,17 +139,35 @@
       .ctaInner { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
 
       .spinner {
-        width: 14px;
-        height: 14px;
-        border-radius: 999px;
-        border: 2px solid rgba(6,38,43,0.25);
-        border-top-color: rgba(6,38,43,0.95);
-        animation: spin .7s linear infinite;
+        width: 18px;
+        height: 18px;
+        position: relative;
         display: none;
+        animation: spinnerRotate 1.4s cubic-bezier(.4, 0, .2, 1) infinite;
       }
+      .spinnerBox {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 2px;
+        background: rgba(6,38,43,0.92);
+        animation: spinnerPulse 1.2s ease-in-out infinite;
+      }
+      .spinnerBox1 { top: 0; left: 0; animation-delay: 0s; }
+      .spinnerBox2 { top: 0; right: 0; animation-delay: .15s; }
+      .spinnerBox3 { bottom: 0; right: 0; animation-delay: .3s; }
+      .spinnerBox4 { bottom: 0; left: 0; animation-delay: .45s; }
       .isLoading .spinner { display: inline-block; }
       .isLoading .ctaText { opacity: .92; }
-      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes spinnerRotate {
+        0% { transform: rotate(0deg); }
+        50% { transform: rotate(90deg); }
+        100% { transform: rotate(180deg); }
+      }
+      @keyframes spinnerPulse {
+        0%, 100% { transform: scale(1); opacity: .9; }
+        50% { transform: scale(.45) rotate(45deg); opacity: .45; }
+      }
 
       /* Progress */
       .progress {
@@ -297,30 +315,44 @@
 
       .ringWrap { width: 92px; height: 92px; display:flex; align-items:center; justify-content:center; }
       .ring {
-        --p: 0; /* 0..100 */
         width: 92px;
         height: 92px;
-        border-radius: 999px;
-        background:
-          conic-gradient(from -90deg, rgba(133,205,219,1) calc(var(--p) * 1%), rgba(133,205,219,0.12) 0);
-        -webkit-mask: radial-gradient(transparent 58%, #000 59%);
-        mask: radial-gradient(transparent 58%, #000 59%);
         position: relative;
-        animation: ringPulse 2.4s ease-in-out infinite;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: ringSpin 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
       }
-      .ring::after {
-        content: "";
+      .ringShape {
         position: absolute;
-        inset: 0;
-        border-radius: 999px;
-        background:
-          conic-gradient(from 0deg, rgba(255,255,255,0.0) 0 70%, rgba(255,255,255,0.12) 78%, rgba(255,255,255,0.0) 86%);
-        -webkit-mask: radial-gradient(transparent 58%, #000 59%);
-        mask: radial-gradient(transparent 58%, #000 59%);
-        animation: ringSpin 1.2s linear infinite;
+        width: 18px;
+        height: 18px;
+        border-radius: 6px;
+        background: linear-gradient(135deg, rgba(133,205,219,0.95), rgba(133,205,219,0.5));
+        box-shadow: 0 0 16px rgba(133,205,219,0.35);
+        animation: ringPulse 1.6s ease-in-out infinite;
+      }
+      .ringShape1 { top: 8px; left: 50%; transform: translateX(-50%); animation-delay: 0s; }
+      .ringShape2 { right: 8px; top: 50%; transform: translateY(-50%); animation-delay: .2s; }
+      .ringShape3 { bottom: 8px; left: 50%; transform: translateX(-50%); animation-delay: .4s; }
+      .ringShape4 { left: 8px; top: 50%; transform: translateY(-50%); animation-delay: .6s; }
+      .ringCore {
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        background: rgba(133,205,219,0.25);
+        border: 1px solid rgba(133,205,219,0.35);
+        animation: ringCorePulse 1.6s ease-in-out infinite;
       }
       @keyframes ringSpin { to { transform: rotate(360deg); } }
-      @keyframes ringPulse { 0%, 100% { filter: saturate(1); } 50% { filter: saturate(1.08); } }
+      @keyframes ringPulse {
+        0%, 100% { transform: scale(1); opacity: .95; }
+        50% { transform: scale(.55) rotate(45deg); opacity: .55; }
+      }
+      @keyframes ringCorePulse {
+        0%, 100% { transform: scale(.8); opacity: .6; }
+        50% { transform: scale(1); opacity: .95; }
+      }
 
       .busyText { text-align: center; }
       .busyTitle { font-weight: 900; letter-spacing: .2px; }
@@ -420,7 +452,12 @@
       <div class="footer" id="footer">
         <button id="export" class="btn btnPrimary cta">
           <span class="ctaInner">
-            <span class="spinner" aria-hidden="true"></span>
+            <span class="spinner" aria-hidden="true">
+              <span class="spinnerBox spinnerBox1"></span>
+              <span class="spinnerBox spinnerBox2"></span>
+              <span class="spinnerBox spinnerBox3"></span>
+              <span class="spinnerBox spinnerBox4"></span>
+            </span>
             <span class="ctaText">Export PPTX</span>
           </span>
         </button>
@@ -432,7 +469,13 @@
     <div id="busyOverlay" class="busyOverlay" aria-hidden="true">
       <div class="busyCard" role="dialog" aria-label="Exporting">
         <div class="ringWrap">
-          <div class="ring" aria-hidden="true"></div>
+          <div class="ring" aria-hidden="true">
+            <span class="ringShape ringShape1"></span>
+            <span class="ringShape ringShape2"></span>
+            <span class="ringShape ringShape3"></span>
+            <span class="ringShape ringShape4"></span>
+            <span class="ringCore"></span>
+          </div>
         </div>
         <div class="busyText">
           <div class="busyTitle">Exporting…</div>
