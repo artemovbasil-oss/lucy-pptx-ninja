@@ -140,19 +140,30 @@
 
       /* Progress */
       .progress {
-        height: 8px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--line);
+        height: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+        border: 1px solid rgba(255,255,255,0.08);
         border-radius: 999px;
         overflow: hidden;
+        position: relative;
       }
       .bar {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, rgba(133,205,219,0.75), rgba(133,205,219,1));
-        transition: width .15s var(--ease);
+        background: linear-gradient(90deg, rgba(133,205,219,0.6), rgba(133,205,219,1));
+        border-radius: inherit;
+        transition: width .35s cubic-bezier(.4, 0, .2, 1);
+        box-shadow: 0 0 12px rgba(133,205,219,0.35);
       }
-      .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 8px; gap: 10px; }
+      .progress::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(255,255,255,0.12), transparent 40%, transparent 60%, rgba(255,255,255,0.08));
+        opacity: .25;
+        pointer-events: none;
+      }
+      .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 10px; gap: 10px; }
       .stateDot {
         width: 10px;
         height: 10px;
@@ -281,6 +292,12 @@
         align-items: center;
         gap: 12px;
       }
+      .overlayProgress {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
 
       .ringWrap { width: 140px; height: 92px; display:flex; align-items:center; justify-content:center; }
       .deckLoader {
@@ -376,22 +393,6 @@
 
       <div class="card">
         <div class="cardHeader">
-          <div class="label">Progress</div>
-          <div class="muted"> </div>
-        </div>
-
-        <div class="progress"><div id="bar" class="bar"></div></div>
-
-        <div class="progline">
-          <div id="progText" class="muted">Idle</div>
-          <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
-        </div>
-
-        <div id="status" class="status">Select one or more frames.</div>
-      </div>
-
-      <div class="card">
-        <div class="cardHeader">
           <div class="label">Export</div>
           <div class="hint">Format & quality</div>
         </div>
@@ -448,6 +449,14 @@
         <div class="busyText">
           <div class="busyTitle">Exporting…</div>
           <div id="overlayHint" class="busyHint">Lucy is converting your slides</div>
+        </div>
+        <div class="overlayProgress">
+          <div class="progress"><div id="bar" class="bar"></div></div>
+          <div class="progline">
+            <div id="progText" class="muted">Idle</div>
+            <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+          </div>
+          <div id="status" class="status">Select one or more frames.</div>
         </div>
         <button id="overlayCancel" class="overlayCancel" aria-label="Cancel export">
           <svg viewBox="0 0 24 24" aria-hidden="true">
