@@ -396,6 +396,7 @@ function getSmartBackground(frame: FrameNode): { fill: string; opacity: number }
     if (hasImageFill(frame)) return null;
     if (hasAnyGradientFill(frame)) return null;
     if (!hasOnlySolidFills(frame)) return null;
+    if (frame.clipsContent === true && hasOverflowingDescendant(frame)) return null;
 
     const fill = getSolidFill(frame);
     if (!fill) return null;
@@ -453,6 +454,20 @@ function isSafeContainerBg(node: SceneNode): boolean {
   const fill = getSolidFill(node);
   const stroke = getSolidStroke(node);
   return !!(fill || stroke);
+}
+
+function isRectOutsideFrame(r: { x: number; y: number; w: number; h: number }, frame: FrameNode): boolean {
+  const pad = 0.5;
+  return r.x < -pad || r.y < -pad || r.x + r.w > frame.width + pad || r.y + r.h > frame.height + pad;
+}
+
+function isWidePillCandidate(node: SceneNode, frame: FrameNode): boolean {
+  const radius = getCornerRadiusAny(node);
+  if (radius <= 0) return false;
+  const r = rectRelativeToFrame(node, frame);
+  if (r.w < frame.width * 0.7) return false;
+  if (r.h > frame.height * 0.22) return false;
+  return radius >= r.h / 2 - 1;
 }
 
 // ---- Gradient container BG: rasterize bg-only (hide text descendants) ----
@@ -713,20 +728,45 @@ async function exportOneFrame(
           const fill = getSolidFill(node);
           const stroke = getSolidStroke(node);
           const radius = getCornerRadiusAny(node);
+          const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
 
-          items.push({
-            kind: "shape",
-            z,
-            id: node.id,
-            shape: "rect",
-            x: r.x, y: r.y, w: r.w, h: r.h,
-            fill,
-            stroke,
-            radius,
-            opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
-          });
+          if (isWidePillCandidate(node, frame)) {
+            postProgress("export", idx - 1, total, `Pill background: ${frame.name}`, `Rasterizing pill background…`);
+            const bytes = await rasterizeContainerBackgroundOnly(node, exportScale);
 
-          markHide(node);
+            items.push({
+              kind: "raster",
+              z,
+              id: `pillBg__${node.id}`,
+              x: r.x, y: r.y, w: r.w, h: r.h,
+              pngBytes: Array.from(bytes)
+            });
+
+            markHide(node);
+            if ("children" in node) {
+              for (const ch of node.children as readonly SceneNode[]) {
+                await walk(ch as SceneNode, true);
+                if (cancelRequested) return;
+              }
+            }
+            return;
+          }
+
+          if (!isOverflowing) {
+            items.push({
+              kind: "shape",
+              z,
+              id: node.id,
+              shape: "rect",
+              x: r.x, y: r.y, w: r.w, h: r.h,
+              fill,
+              stroke,
+              radius,
+              opacity: typeof (node as any).opacity === "number" ? (node as any).opacity : 1
+            });
+
+            markHide(node);
+          }
         }
       }
 
@@ -788,18 +828,36 @@ async function exportOneFrame(
           const fill = getSolidFill(rn);
           const stroke = getSolidStroke(rn);
           const radius = getCornerRadiusAny(rn);
+          const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
 
           if (fill || stroke) {
-            items.push({
-              kind: "shape",
-              z,
-              id: rn.id,
-              shape: "rect",
-              x: r.x, y: r.y, w: r.w, h: r.h,
-              fill, stroke, radius,
-              opacity: typeof rn.opacity === "number" ? rn.opacity : 1
-            });
-            markHide(rn);
+            if (isWidePillCandidate(rn, frame)) {
+              postProgress("export", idx - 1, total, `Pill shape: ${frame.name}`, `Rasterizing pill shape…`);
+              const bytes = await rasterizeNodePNG(rn, exportScale);
+
+              items.push({
+                kind: "raster",
+                z,
+                id: `pillRect__${rn.id}`,
+                x: r.x, y: r.y, w: r.w, h: r.h,
+                pngBytes: Array.from(bytes)
+              });
+              markHide(rn);
+              return;
+            }
+
+            if (!isOverflowing) {
+              items.push({
+                kind: "shape",
+                z,
+                id: rn.id,
+                shape: "rect",
+                x: r.x, y: r.y, w: r.w, h: r.h,
+                fill, stroke, radius,
+                opacity: typeof rn.opacity === "number" ? rn.opacity : 1
+              });
+              markHide(rn);
+            }
           }
           return;
         }
@@ -850,8 +908,12 @@ async function exportOneFrame(
 
       // 5) Raster fallback (icons/arrows/complex vectors etc.)
       if (shouldRasterOverlay(node, frame)) {
-        rasterCandidates.push(node);
-        markHide(node);
+        const r = rectRelativeToFrame(node, frame);
+        const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
+        if (!isOverflowing) {
+          rasterCandidates.push(node);
+          markHide(node);
+        }
         return;
       }
     }
