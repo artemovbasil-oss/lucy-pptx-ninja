@@ -139,6 +139,65 @@
       .ctaInner { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
 
       /* Progress */
+      .progress {
+        height: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 999px;
+        overflow: hidden;
+        position: relative;
+      }
+      .bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, rgba(133,205,219,0.6), rgba(133,205,219,1));
+        border-radius: inherit;
+        transition: width .35s cubic-bezier(.4, 0, .2, 1);
+        box-shadow: 0 0 14px rgba(133,205,219,0.35);
+        position: relative;
+        overflow: hidden;
+      }
+      .bar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: repeating-linear-gradient(
+          135deg,
+          rgba(255,255,255,0.22) 0,
+          rgba(255,255,255,0.22) 12px,
+          rgba(255,255,255,0.08) 12px,
+          rgba(255,255,255,0.08) 24px
+        );
+        background-size: 48px 48px;
+        animation: barStripes 2.2s linear infinite;
+        opacity: .4;
+        pointer-events: none;
+      }
+      @keyframes barStripes {
+        from { background-position: 0 0; }
+        to { background-position: 48px 48px; }
+      }
+      .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 10px; gap: 10px; }
+      .stateDot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #666;
+        box-shadow: none;
+      }
+      .stateDot.idle { background: rgba(167,167,179,0.65); }
+      .stateDot.processing {
+        background: var(--accent);
+        box-shadow: 0 0 10px rgba(133,205,219,0.45);
+      }
+      .stateDot.success {
+        background: #6EE7B7;
+        box-shadow: 0 0 10px rgba(110,231,183,0.35);
+      }
+      .stateDot.error {
+        background: #F87171;
+        box-shadow: 0 0 10px rgba(248,113,113,0.35);
+      }
       .status { white-space: pre-line; margin-top: 8px; color: var(--muted); }
 
       /* Slides list */
@@ -247,46 +306,11 @@
         align-items: center;
         gap: 12px;
       }
-      .ringWrap { width: 140px; height: 92px; display:flex; align-items:center; justify-content:center; }
-      .deckLoader {
-        position: relative;
-        width: 120px;
-        height: 64px;
-        perspective: 800px;
-      }
-      .deckSlide {
-        position: absolute;
-        left: 18px;
-        width: 84px;
-        height: 48px;
-        border-radius: 10px;
-        border: 1px solid #3f5f69;
-        background: #1b2226;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.35);
-        transform-origin: center bottom;
-        animation: deckCycle 2s cubic-bezier(.4, 0, .2, 1) infinite;
-        will-change: transform;
-      }
-      .deckSlide::after {
-        content: "";
-        position: absolute;
-        inset: 10px 12px;
-        border-radius: 6px;
-        border: 1px solid #314952;
-        background: #141a1e;
-      }
-      .deckSlide1 { top: 6px; animation-delay: 0s; }
-      .deckSlide2 { top: 3px; animation-delay: .3s; }
-      .deckSlide3 { top: 0; animation-delay: .6s; }
-      @keyframes deckCycle {
-        0%, 100% {
-          transform: translateX(-12px) translateY(8px) scale(.94) rotateX(2deg);
-          box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-        }
-        50% {
-          transform: translateX(12px) translateY(-4px) scale(1) rotateX(-1deg);
-          box-shadow: 0 14px 22px rgba(0,0,0,0.4);
-        }
+      .overlayProgress {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
       }
 
       .busyText { text-align: center; }
@@ -381,18 +405,18 @@
     <!-- Busy overlay (shown only during export) -->
     <div id="busyOverlay" class="busyOverlay" aria-hidden="true">
       <div class="busyCard" role="dialog" aria-label="Exporting">
-        <div class="ringWrap">
-          <div class="deckLoader" aria-hidden="true">
-            <span class="deckSlide deckSlide1"></span>
-            <span class="deckSlide deckSlide2"></span>
-            <span class="deckSlide deckSlide3"></span>
-          </div>
-        </div>
         <div class="busyText">
           <div class="busyTitle">Exporting…</div>
           <div id="overlayHint" class="busyHint">Lucy is converting your slides</div>
         </div>
-        <div id="status" class="status">Select one or more frames.</div>
+        <div class="overlayProgress">
+          <div class="progress"><div id="bar" class="bar"></div></div>
+          <div class="progline">
+            <div id="progText" class="muted">Idle</div>
+            <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+          </div>
+          <div id="status" class="status">Select one or more frames.</div>
+        </div>
         <button id="overlayCancel" class="overlayCancel" aria-label="Cancel export">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" />
