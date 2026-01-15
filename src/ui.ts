@@ -970,6 +970,7 @@ function updateExportLabel() {
   if (!ctaTextEl) return;
   const format = getSegmentedValue(formatSelect, "pptx");
   ctaTextEl.textContent = format === "pdf" ? "Export PDF" : "Export PPTX";
+  document.documentElement.classList.toggle("formatPdf", format === "pdf");
 }
 
 formatSelect?.addEventListener("click", updateExportLabel);
