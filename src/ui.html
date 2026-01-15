@@ -138,34 +138,32 @@
       /* CTA content */
       .ctaInner { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
 
-      .spinner {
-        width: 14px;
-        height: 14px;
-        border-radius: 999px;
-        border: 2px solid rgba(6,38,43,0.25);
-        border-top-color: rgba(6,38,43,0.95);
-        animation: spin .7s linear infinite;
-        display: none;
-      }
-      .isLoading .spinner { display: inline-block; }
-      .isLoading .ctaText { opacity: .92; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-
       /* Progress */
       .progress {
-        height: 8px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--line);
+        height: 10px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+        border: 1px solid rgba(255,255,255,0.08);
         border-radius: 999px;
         overflow: hidden;
+        position: relative;
       }
       .bar {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, rgba(133,205,219,0.75), rgba(133,205,219,1));
-        transition: width .15s var(--ease);
+        background: linear-gradient(90deg, rgba(133,205,219,0.6), rgba(133,205,219,1));
+        border-radius: inherit;
+        transition: width .35s cubic-bezier(.4, 0, .2, 1);
+        box-shadow: 0 0 12px rgba(133,205,219,0.35);
       }
-      .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 8px; gap: 10px; }
+      .progress::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, rgba(255,255,255,0.12), transparent 40%, transparent 60%, rgba(255,255,255,0.08));
+        opacity: .25;
+        pointer-events: none;
+      }
+      .progline { display:flex; align-items:center; justify-content: space-between; margin-top: 10px; gap: 10px; }
       .stateDot {
         width: 10px;
         height: 10px;
@@ -294,33 +292,60 @@
         align-items: center;
         gap: 12px;
       }
-
-      .ringWrap { width: 92px; height: 92px; display:flex; align-items:center; justify-content:center; }
-      .ring {
-        --p: 0; /* 0..100 */
-        width: 92px;
-        height: 92px;
-        border-radius: 999px;
-        background:
-          conic-gradient(from -90deg, rgba(133,205,219,1) calc(var(--p) * 1%), rgba(133,205,219,0.12) 0);
-        -webkit-mask: radial-gradient(transparent 58%, #000 59%);
-        mask: radial-gradient(transparent 58%, #000 59%);
-        position: relative;
-        animation: ringPulse 2.4s ease-in-out infinite;
+      .overlayProgress {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
       }
-      .ring::after {
+
+      .ringWrap { width: 140px; height: 92px; display:flex; align-items:center; justify-content:center; }
+      .deckLoader {
+        position: relative;
+        width: 120px;
+        height: 64px;
+        perspective: 800px;
+      }
+      .deckSlide {
+        position: absolute;
+        left: 18px;
+        width: 84px;
+        height: 48px;
+        border-radius: 10px;
+        border: 1px solid rgba(133,205,219,0.35);
+        background: linear-gradient(160deg, rgba(133,205,219,0.24), rgba(133,205,219,0.08));
+        box-shadow: 0 10px 22px rgba(0,0,0,0.35);
+        transform-origin: center bottom;
+        animation: deckSlide 2.4s cubic-bezier(.4, 0, .2, 1) infinite;
+      }
+      .deckSlide::after {
         content: "";
         position: absolute;
-        inset: 0;
-        border-radius: 999px;
-        background:
-          conic-gradient(from 0deg, rgba(255,255,255,0.0) 0 70%, rgba(255,255,255,0.12) 78%, rgba(255,255,255,0.0) 86%);
-        -webkit-mask: radial-gradient(transparent 58%, #000 59%);
-        mask: radial-gradient(transparent 58%, #000 59%);
-        animation: ringSpin 1.2s linear infinite;
+        inset: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(133,205,219,0.35);
+        background: rgba(133,205,219,0.06);
       }
-      @keyframes ringSpin { to { transform: rotate(360deg); } }
-      @keyframes ringPulse { 0%, 100% { filter: saturate(1); } 50% { filter: saturate(1.08); } }
+      .deckSlide1 { top: 6px; animation-delay: 0s; }
+      .deckSlide2 { top: 3px; animation-delay: .4s; }
+      .deckSlide3 { top: 0; animation-delay: .8s; }
+      @keyframes deckSlide {
+        0% {
+          transform: translateX(-16px) translateY(10px) scale(.94) rotateX(6deg);
+          opacity: .45;
+          box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+        }
+        45% {
+          transform: translateX(0) translateY(0) scale(1) rotateX(0deg);
+          opacity: 1;
+          box-shadow: 0 14px 26px rgba(0,0,0,0.4);
+        }
+        100% {
+          transform: translateX(16px) translateY(-6px) scale(.96) rotateX(-4deg);
+          opacity: .35;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+      }
 
       .busyText { text-align: center; }
       .busyTitle { font-weight: 900; letter-spacing: .2px; }
@@ -368,22 +393,6 @@
 
       <div class="card">
         <div class="cardHeader">
-          <div class="label">Progress</div>
-          <div class="muted"> </div>
-        </div>
-
-        <div class="progress"><div id="bar" class="bar"></div></div>
-
-        <div class="progline">
-          <div id="progText" class="muted">Idle</div>
-          <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
-        </div>
-
-        <div id="status" class="status">Select one or more frames.</div>
-      </div>
-
-      <div class="card">
-        <div class="cardHeader">
           <div class="label">Export</div>
           <div class="hint">Format & quality</div>
         </div>
@@ -420,7 +429,6 @@
       <div class="footer" id="footer">
         <button id="export" class="btn btnPrimary cta">
           <span class="ctaInner">
-            <span class="spinner" aria-hidden="true"></span>
             <span class="ctaText">Export PPTX</span>
           </span>
         </button>
@@ -432,11 +440,23 @@
     <div id="busyOverlay" class="busyOverlay" aria-hidden="true">
       <div class="busyCard" role="dialog" aria-label="Exporting">
         <div class="ringWrap">
-          <div class="ring" aria-hidden="true"></div>
+          <div class="deckLoader" aria-hidden="true">
+            <span class="deckSlide deckSlide1"></span>
+            <span class="deckSlide deckSlide2"></span>
+            <span class="deckSlide deckSlide3"></span>
+          </div>
         </div>
         <div class="busyText">
           <div class="busyTitle">Exporting…</div>
           <div id="overlayHint" class="busyHint">Lucy is converting your slides</div>
+        </div>
+        <div class="overlayProgress">
+          <div class="progress"><div id="bar" class="bar"></div></div>
+          <div class="progline">
+            <div id="progText" class="muted">Idle</div>
+            <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+          </div>
+          <div id="status" class="status">Select one or more frames.</div>
         </div>
         <button id="overlayCancel" class="overlayCancel" aria-label="Cancel export">
           <svg viewBox="0 0 24 24" aria-hidden="true">
