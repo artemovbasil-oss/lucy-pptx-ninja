@@ -138,37 +138,6 @@
       /* CTA content */
       .ctaInner { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
 
-      .spinner {
-        width: 18px;
-        height: 18px;
-        position: relative;
-        display: none;
-        animation: spinnerRotate 1.4s cubic-bezier(.4, 0, .2, 1) infinite;
-      }
-      .spinnerBox {
-        position: absolute;
-        width: 6px;
-        height: 6px;
-        border-radius: 2px;
-        background: rgba(6,38,43,0.92);
-        animation: spinnerPulse 1.2s ease-in-out infinite;
-      }
-      .spinnerBox1 { top: 0; left: 0; animation-delay: 0s; }
-      .spinnerBox2 { top: 0; right: 0; animation-delay: .15s; }
-      .spinnerBox3 { bottom: 0; right: 0; animation-delay: .3s; }
-      .spinnerBox4 { bottom: 0; left: 0; animation-delay: .45s; }
-      .isLoading .spinner { display: inline-block; }
-      .isLoading .ctaText { opacity: .92; }
-      @keyframes spinnerRotate {
-        0% { transform: rotate(0deg); }
-        50% { transform: rotate(90deg); }
-        100% { transform: rotate(180deg); }
-      }
-      @keyframes spinnerPulse {
-        0%, 100% { transform: scale(1); opacity: .9; }
-        50% { transform: scale(.45) rotate(45deg); opacity: .45; }
-      }
-
       /* Progress */
       .progress {
         height: 8px;
@@ -313,24 +282,24 @@
         gap: 12px;
       }
 
-      .ringWrap { width: 120px; height: 92px; display:flex; align-items:center; justify-content:center; }
+      .ringWrap { width: 140px; height: 92px; display:flex; align-items:center; justify-content:center; }
       .deckLoader {
         position: relative;
-        width: 96px;
+        width: 120px;
         height: 64px;
-        perspective: 600px;
+        perspective: 800px;
       }
       .deckSlide {
         position: absolute;
-        left: 10px;
-        width: 76px;
+        left: 18px;
+        width: 84px;
         height: 48px;
         border-radius: 10px;
         border: 1px solid rgba(133,205,219,0.35);
         background: linear-gradient(160deg, rgba(133,205,219,0.24), rgba(133,205,219,0.08));
         box-shadow: 0 10px 22px rgba(0,0,0,0.35);
         transform-origin: center bottom;
-        animation: deckFlip 1.8s cubic-bezier(.4, 0, .2, 1) infinite;
+        animation: deckSlide 2.4s cubic-bezier(.4, 0, .2, 1) infinite;
       }
       .deckSlide::after {
         content: "";
@@ -340,12 +309,25 @@
         border: 1px solid rgba(133,205,219,0.35);
         background: rgba(133,205,219,0.06);
       }
-      .deckSlide1 { top: 8px; transform: translateY(12px) scale(.96); opacity: .55; animation-delay: 0s; }
-      .deckSlide2 { top: 2px; transform: translateY(6px) scale(.98); opacity: .75; animation-delay: .2s; }
-      .deckSlide3 { top: 0; transform: translateY(0) scale(1); opacity: 1; animation-delay: .4s; }
-      @keyframes deckFlip {
-        0%, 100% { transform: translateY(0) scale(1) rotateX(0deg); box-shadow: 0 10px 22px rgba(0,0,0,0.35); }
-        50% { transform: translateY(-8px) scale(1.02) rotateX(12deg); box-shadow: 0 16px 26px rgba(0,0,0,0.45); }
+      .deckSlide1 { top: 6px; animation-delay: 0s; }
+      .deckSlide2 { top: 3px; animation-delay: .4s; }
+      .deckSlide3 { top: 0; animation-delay: .8s; }
+      @keyframes deckSlide {
+        0% {
+          transform: translateX(-16px) translateY(10px) scale(.94) rotateX(6deg);
+          opacity: .45;
+          box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+        }
+        45% {
+          transform: translateX(0) translateY(0) scale(1) rotateX(0deg);
+          opacity: 1;
+          box-shadow: 0 14px 26px rgba(0,0,0,0.4);
+        }
+        100% {
+          transform: translateX(16px) translateY(-6px) scale(.96) rotateX(-4deg);
+          opacity: .35;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
       }
 
       .busyText { text-align: center; }
@@ -446,12 +428,6 @@
       <div class="footer" id="footer">
         <button id="export" class="btn btnPrimary cta">
           <span class="ctaInner">
-            <span class="spinner" aria-hidden="true">
-              <span class="spinnerBox spinnerBox1"></span>
-              <span class="spinnerBox spinnerBox2"></span>
-              <span class="spinnerBox spinnerBox3"></span>
-              <span class="spinnerBox spinnerBox4"></span>
-            </span>
             <span class="ctaText">Export PPTX</span>
           </span>
         </button>
