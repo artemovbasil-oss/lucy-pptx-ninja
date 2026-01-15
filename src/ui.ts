@@ -25,8 +25,6 @@ const versionEl = document.getElementById("version") as HTMLDivElement | null;
 
 // Busy overlay elements
 const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
-// Overlay uses a ring indicator (no numeric percent)
-const ringEl = document.querySelector(".ring") as HTMLDivElement | null;
 const overlayHintEl = document.getElementById("overlayHint") as HTMLDivElement | null;
 const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonElement | null;
 
@@ -137,7 +135,6 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 
   barEl.style.width = `${p}%`;
   if (pctEl) pctEl.textContent = "";
-  if (isBusy && ringEl) ringEl.style.setProperty("--p", String(p));
   if (isBusy && overlayHintEl && phase) overlayHintEl.textContent = String(phase);
   progTextEl.textContent = label ? label : `${c}/${t}`;
   if (text) setStatus(text);
@@ -151,7 +148,6 @@ function showBusyOverlay(show: boolean) {
   if (show) {
     busyOverlayEl.classList.add("show");
     busyOverlayEl.setAttribute("aria-hidden", "false");
-    if (ringEl) ringEl.style.setProperty("--p", "0");
   } else {
     busyOverlayEl.classList.remove("show");
     busyOverlayEl.setAttribute("aria-hidden", "true");
