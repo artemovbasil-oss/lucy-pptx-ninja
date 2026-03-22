@@ -25,6 +25,18 @@ function shouldUseRemotePptx(format: string): boolean {
   return format === "pptx" && !!REMOTE_API_BASE;
 }
 
+function getExportScale(format: string, quality: string, remotePptx: boolean): number {
+  if (format === "pdf") {
+    return quality === "low" ? 1 : quality === "medium" ? 1.5 : 2;
+  }
+
+  if (remotePptx) {
+    return quality === "low" ? 1 : quality === "medium" ? 1.5 : 2;
+  }
+
+  return quality === "low" ? 1 : quality === "medium" ? 2 : 3;
+}
+
 async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers || {});
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -1045,6 +1057,7 @@ async function exportFramesRemotely(
   filename: string
 ): Promise<string> {
   postProgress("remote", 0, frames.length, "Creating server job…", "Connecting to Railway backend…");
+  postStatus("Mode: Railway backend");
   const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
     method: "POST",
     body: JSON.stringify({ filename })
@@ -1054,6 +1067,7 @@ async function exportFramesRemotely(
     throwIfCancelled();
     const slide = await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster);
     postProgress("upload", i, frames.length, `Uploading slide ${i + 1}/${frames.length}`, slide.name);
+    postStatus(`Mode: Railway backend. Uploading slide ${i + 1}/${frames.length}…`);
 
     await fetchJson(`${REMOTE_API_BASE}/api/jobs/${created.jobId}/slides/${i}`, {
       method: "PUT",
@@ -1136,9 +1150,8 @@ figma.ui.onmessage = async (msg) => {
 
       const quality = String(msg.quality || "best");
       const format = String(msg.format || "pptx");
-      const exportScale = format === "pdf"
-        ? (quality === "low" ? 1 : quality === "medium" ? 1.5 : 2)
-        : (quality === "low" ? 1 : quality === "medium" ? 2 : 3);
+      const useRemotePptx = shouldUseRemotePptx(format);
+      const exportScale = getExportScale(format, quality, useRemotePptx);
       const includeFullRaster = format === "pdf";
 
       const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
@@ -1150,7 +1163,7 @@ figma.ui.onmessage = async (msg) => {
 
       postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
 
-      if (shouldUseRemotePptx(format)) {
+      if (useRemotePptx) {
         try {
           postStatus("Using Railway backend for PPTX export…");
           const downloadUrl = await exportFramesRemotely(frames, exportScale, includeFullRaster, filename);

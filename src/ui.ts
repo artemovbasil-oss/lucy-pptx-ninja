@@ -124,6 +124,11 @@ function uint8ToBase64(u8: Uint8Array): string {
 
 function setStatus(msg: string) { statusEl.textContent = msg; }
 
+function describeExportMode(format: string) {
+  if (format !== "pptx") return "Mode: local PDF export";
+  return REMOTE_API_BASE ? "Mode: Railway PPTX export" : "Mode: local PPTX export";
+}
+
 function triggerDownload(url: string, filename?: string) {
   const a = document.createElement("a");
   a.href = url;
@@ -309,15 +314,14 @@ exportBtn.onclick = () => {
     uiCancelRequested = false;
     setBusy(true, "Exporting…");
     setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
-    setStatus(REMOTE_API_BASE
-      ? "Starting export via Railway backend…"
-      : "Starting local export…");
+    const format = getSegmentedValue(formatSelect, "pptx");
+    setStatus(`${describeExportMode(format)}. Preparing export…`);
 
     parent.postMessage({
       pluginMessage: {
         type: "EXPORT_PPTX_ORDERED",
         frameIds: ids,
-        format: getSegmentedValue(formatSelect, "pptx"),
+        format,
         quality: getSegmentedValue(qualitySelect, "best")
       }
     }, "*");
