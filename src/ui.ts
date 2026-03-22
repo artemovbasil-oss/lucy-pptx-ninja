@@ -24,6 +24,7 @@ const formatSelect = document.getElementById("formatSelect") as HTMLDivElement |
 const qualitySelect = document.getElementById("qualitySelect") as HTMLDivElement | null;
 
 const versionEl = document.getElementById("version") as HTMLDivElement | null;
+const tinyHintEl = document.getElementById("tinyHint") as HTMLDivElement | null;
 
 // Busy overlay elements
 const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
