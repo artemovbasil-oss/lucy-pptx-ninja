@@ -140,9 +140,26 @@ function triggerDownload(url: string, filename?: string) {
 
 function showFatalUiError(prefix: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
+  remoteExportState = null;
   setStatus(`${prefix}: ${message}`);
   setBusy(false, "Export PPTX");
   setState("error");
+}
+
+async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers || {});
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const res = await fetch(url, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return await res.json() as T;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 type UiState = "idle" | "processing" | "success" | "error";
@@ -204,6 +221,7 @@ function setBusy(next: boolean, ctaLabel?: string) {
 
 type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
 let currentFrames: FrameInfo[] = [];
+let remoteExportState: { jobId: string; filename: string; total: number; uploaded: number } | null = null;
 
 function getOrderedFrameIdsFromDOM(): string[] {
   const els = Array.from(listEl.querySelectorAll(".item")) as HTMLElement[];
@@ -882,6 +900,82 @@ async function buildPdfFromSlides(filename: string, slides: ExportSlide[], quali
   setState("success");
 }
 
+async function beginRemoteExport(filename: string, total: number) {
+  setStatus("Mode: Railway backend. Creating server job…");
+  setProgress("remote", 0, total, "Creating server job…", "Connecting to Railway…");
+  const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
+    method: "POST",
+    body: JSON.stringify({ filename })
+  });
+  remoteExportState = {
+    jobId: created.jobId,
+    filename,
+    total,
+    uploaded: 0
+  };
+}
+
+async function uploadRemoteSlide(index: number, total: number, slide: ExportSlide) {
+  if (!remoteExportState) {
+    throw new Error("Remote export session is not initialized.");
+  }
+
+  setStatus(`Mode: Railway backend. Uploading slide ${index + 1}/${total}…`);
+  setProgress("upload", index, total, `Uploading slide ${index + 1}/${total}`, slide.name);
+
+  await fetchJson(`${REMOTE_API_BASE}/api/jobs/${remoteExportState.jobId}/slides/${index}`, {
+    method: "PUT",
+    body: JSON.stringify(slide)
+  });
+
+  remoteExportState.uploaded = index + 1;
+  setProgress("upload", index + 1, total, `Uploaded ${index + 1}/${total}`, slide.name);
+}
+
+async function finalizeRemoteExport() {
+  if (!remoteExportState) {
+    throw new Error("Remote export session is not initialized.");
+  }
+
+  const { jobId, filename, total } = remoteExportState;
+  setStatus("Mode: Railway backend. Starting server build…");
+  setProgress("remote", total, total, "Starting server build…", "Building PPTX on Railway…");
+
+  await fetchJson(`${REMOTE_API_BASE}/api/jobs/${jobId}/finalize`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+
+  for (let attempt = 0; attempt < 240; attempt++) {
+    if (uiCancelRequested) throw new Error("CANCELLED_UI");
+
+    const status = await fetchJson<{ status: string; error?: string | null; downloadUrl?: string | null }>(
+      `${REMOTE_API_BASE}/api/jobs/${jobId}/status`
+    );
+
+    if (status.status === "completed" && status.downloadUrl) {
+      setStatus("Mode: Railway backend. Downloading PPTX…");
+      setProgress("done", 1, 1, "Done", "Server export complete ✅");
+      setState("success");
+      triggerDownload(status.downloadUrl, filename);
+      remoteExportState = null;
+      return;
+    }
+
+    if (status.status === "failed") {
+      remoteExportState = null;
+      throw new Error(status.error || "Railway export failed.");
+    }
+
+    setStatus(`Mode: Railway backend. Server status: ${status.status}`);
+    setProgress("remote", total, total, "Building on Railway…", `Server status: ${status.status}`);
+    await sleep(1500);
+  }
+
+  remoteExportState = null;
+  throw new Error("Remote export timed out while waiting for the server.");
+}
+
 window.onmessage = async (event) => {
   const msg = event.data?.pluginMessage;
   if (!msg) return;
@@ -889,6 +983,7 @@ window.onmessage = async (event) => {
   if (msg.type === "STATUS") { setStatus(msg.text); return; }
 
   if (msg.type === "ERROR") {
+    remoteExportState = null;
     setStatus("Error:\n" + msg.text);
     setBusy(false, "Export PPTX");
     setState("error");
@@ -913,6 +1008,32 @@ window.onmessage = async (event) => {
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
     uiCancelRequested = false;
+    remoteExportState = null;
+    return;
+  }
+
+  if (msg.type === "REMOTE_EXPORT_BEGIN") {
+    try {
+      await beginRemoteExport(msg.filename ?? "Lucy_batch.pptx", msg.total || 1);
+    } catch (err) {
+      remoteExportState = null;
+      throw err;
+    }
+    return;
+  }
+
+  if (msg.type === "REMOTE_EXPORT_SLIDE") {
+    await uploadRemoteSlide(msg.index || 0, msg.total || 1, msg.slide);
+    return;
+  }
+
+  if (msg.type === "REMOTE_EXPORT_FINISH") {
+    try {
+      await finalizeRemoteExport();
+    } finally {
+      setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
+    }
     return;
   }
 
@@ -924,6 +1045,7 @@ window.onmessage = async (event) => {
     } finally {
       setBusy(false, "Export PPTX");
       uiCancelRequested = false;
+      remoteExportState = null;
     }
     return;
   }
