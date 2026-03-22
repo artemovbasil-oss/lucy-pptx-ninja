@@ -14,6 +14,14 @@ const MAX_JSON_BODY = process.env.LUCY_MAX_JSON_BODY || "200mb";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: MAX_JSON_BODY }));
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    const durationMs = Date.now() - startedAt;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${durationMs}ms`);
+  });
+  next();
+});
 
 function getJobDir(jobId) {
   return path.join(JOB_ROOT, jobId);
