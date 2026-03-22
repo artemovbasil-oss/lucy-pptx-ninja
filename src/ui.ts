@@ -133,6 +133,13 @@ function triggerDownload(url: string, filename?: string) {
   a.click();
 }
 
+function showFatalUiError(prefix: string, err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  setStatus(`${prefix}: ${message}`);
+  setBusy(false, "Export PPTX");
+  setState("error");
+}
+
 type UiState = "idle" | "processing" | "success" | "error";
 function setState(state: UiState) {
   if (!stateDotEl) return;
@@ -290,25 +297,33 @@ function renderList(frames: FrameInfo[]) {
 }
 
 exportBtn.onclick = () => {
-  if (isBusy) return;
+  try {
+    if (isBusy) return;
 
-  const ids = getOrderedFrameIdsFromDOM();
-  if (!ids.length) {
-    setStatus("No frames selected.");
-    return;
-  }
-
-  uiCancelRequested = false;
-  setBusy(true, "Exporting…");
-  setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
-  parent.postMessage({
-    pluginMessage: {
-      type: "EXPORT_PPTX_ORDERED",
-      frameIds: ids,
-      format: getSegmentedValue(formatSelect, "pptx"),
-      quality: getSegmentedValue(qualitySelect, "best")
+    const ids = getOrderedFrameIdsFromDOM();
+    if (!ids.length) {
+      setStatus("No frames selected.");
+      return;
     }
-  }, "*");
+
+    uiCancelRequested = false;
+    setBusy(true, "Exporting…");
+    setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
+    setStatus(REMOTE_API_BASE
+      ? "Starting export via Railway backend…"
+      : "Starting local export…");
+
+    parent.postMessage({
+      pluginMessage: {
+        type: "EXPORT_PPTX_ORDERED",
+        frameIds: ids,
+        format: getSegmentedValue(formatSelect, "pptx"),
+        quality: getSegmentedValue(qualitySelect, "best")
+      }
+    }, "*");
+  } catch (err) {
+    showFatalUiError("Export click failed", err);
+  }
 };
 
 cancelBtn?.addEventListener('click', () => {
@@ -967,6 +982,14 @@ window.onmessage = async (event) => {
     return;
   }
 };
+
+window.addEventListener("error", (event) => {
+  showFatalUiError("UI error", event.error ?? event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  showFatalUiError("Unhandled promise rejection", event.reason);
+});
 function getSegmentedValue(groupEl: HTMLDivElement | null, fallback: string) {
   const active = groupEl?.querySelector<HTMLButtonElement>(".segment.isActive");
   return active?.dataset.value || fallback;

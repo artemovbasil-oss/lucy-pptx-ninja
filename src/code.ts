@@ -1091,6 +1091,32 @@ async function exportFramesRemotely(
   throw new Error("Remote export timed out while waiting for the server to finish.");
 }
 
+async function exportFramesLocally(
+  frames: FrameNode[],
+  exportScale: number,
+  includeFullRaster: boolean,
+  filename: string,
+  format: string,
+  quality: string
+) {
+  const slides: ExportSlide[] = [];
+  for (let i = 0; i < frames.length; i++) {
+    throwIfCancelled();
+    slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster));
+  }
+
+  throwIfCancelled();
+
+  figma.ui.postMessage({
+    type: "BATCH_BG_AND_ITEMS_V051",
+    filename,
+    slides,
+    format,
+    quality
+  });
+  postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
+}
+
 // --- Messages ---
 figma.ui.onmessage = async (msg) => {
   try {
@@ -1125,31 +1151,25 @@ figma.ui.onmessage = async (msg) => {
       postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
 
       if (shouldUseRemotePptx(format)) {
-        const downloadUrl = await exportFramesRemotely(frames, exportScale, includeFullRaster, filename);
-        figma.ui.postMessage({
-          type: "REMOTE_EXPORT_READY",
-          filename,
-          downloadUrl
-        });
-        return;
+        try {
+          postStatus("Using Railway backend for PPTX export…");
+          const downloadUrl = await exportFramesRemotely(frames, exportScale, includeFullRaster, filename);
+          figma.ui.postMessage({
+            type: "REMOTE_EXPORT_READY",
+            filename,
+            downloadUrl
+          });
+          return;
+        } catch (remoteErr: any) {
+          const remoteMessage = remoteErr?.message ?? String(remoteErr);
+          postStatus(`Railway export failed: ${remoteMessage}. Falling back to local export…`);
+          postProgress("fallback", 0, frames.length, "Railway failed", "Retrying export locally…");
+          await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
+          return;
+        }
       }
 
-      const slides: ExportSlide[] = [];
-      for (let i = 0; i < frames.length; i++) {
-        throwIfCancelled();
-        slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster));
-      }
-
-      throwIfCancelled();
-
-      figma.ui.postMessage({
-        type: "BATCH_BG_AND_ITEMS_V051",
-        filename,
-        slides,
-        format,
-        quality
-      });
-      postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
+      await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
       return;
     }
   } catch (e: any) {
