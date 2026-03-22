@@ -4,7 +4,8 @@
   "description": "Turn Figma frames into clean, editable PowerPoint slides. Fast. Precise. No fuss.",
   "main": "index.js",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "start:server": "node server/index.js"
   },
   "repository": {
     "type": "git",
@@ -19,6 +20,8 @@
   },
   "homepage": "https://github.com/artemovbasil-oss/lucy-pptx-ninja#readme",
   "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
     "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {

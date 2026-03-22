@@ -125,3 +125,58 @@ Portfolio: https://ux.luxury
 
 ### Lucy — PPTX Ninja
 Export once. Edit everywhere.
+
+---
+
+## Railway Backend For Large PPTX Exports
+
+Lucy can now offload `.pptx` assembly to a small Node backend.
+
+Why this helps:
+- Figma still does the frame parsing and `exportAsync`
+- the plugin uploads slides one by one instead of keeping the whole batch in the UI
+- Railway handles the heavy `pptxgenjs` work and returns a download URL
+- PDF export still stays local for now
+
+### Local backend
+
+1. Install dependencies:
+
+```bash
+npm install
+```
+
+2. Start the backend:
+
+```bash
+npm run start:server
+```
+
+3. Build the plugin with the API URL injected:
+
+```bash
+LUCY_API_BASE_URL=http://localhost:8787 npm run build
+```
+
+4. In Figma, reload the plugin manifest.
+
+### Railway deploy
+
+Use the repo root as the Railway project and run:
+
+```bash
+npm install
+npm run start:server
+```
+
+Recommended env vars:
+- `LUCY_PUBLIC_BASE_URL=https://your-app.up.railway.app`
+- `LUCY_JOB_ROOT=/tmp/lucy-pptx-ninja-jobs`
+
+Then rebuild the plugin with:
+
+```bash
+LUCY_API_BASE_URL=https://your-app.up.railway.app npm run build
+```
+
+If your Railway URL is different, update `allowedDomains` in `manifest.json` to include that exact host.

@@ -1,4 +1,6 @@
 // src/code.ts (v0.5.3-dev) — adds: gradient RECTANGLE raster (big pills) + keeps previous fixes
+declare const __LUCY_API_BASE_URL__: string;
+
 figma.showUI(__html__, { width: 360, height: 600 });
 
 function postStatus(text: string) { figma.ui.postMessage({ type: "STATUS", text }); }
@@ -9,12 +11,34 @@ function postProgress(phase: string, current: number, total: number, label?: str
 function postCancelled() { figma.ui.postMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
+const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
+
 function throwIfCancelled() {
   if (cancelRequested) {
     const err: any = new Error("CANCELLED");
     err.__cancelled = true;
     throw err;
   }
+}
+
+function shouldUseRemotePptx(format: string): boolean {
+  return format === "pptx" && !!REMOTE_API_BASE;
+}
+
+async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers || {});
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const res = await fetch(url, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return await res.json() as T;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
@@ -1014,6 +1038,59 @@ async function exportOneFrame(
   };
 }
 
+async function exportFramesRemotely(
+  frames: FrameNode[],
+  exportScale: number,
+  includeFullRaster: boolean,
+  filename: string
+): Promise<string> {
+  postProgress("remote", 0, frames.length, "Creating server job…", "Connecting to Railway backend…");
+  const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
+    method: "POST",
+    body: JSON.stringify({ filename })
+  });
+
+  for (let i = 0; i < frames.length; i++) {
+    throwIfCancelled();
+    const slide = await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster);
+    postProgress("upload", i, frames.length, `Uploading slide ${i + 1}/${frames.length}`, slide.name);
+
+    await fetchJson(`${REMOTE_API_BASE}/api/jobs/${created.jobId}/slides/${i}`, {
+      method: "PUT",
+      body: JSON.stringify(slide)
+    });
+
+    postProgress("upload", i + 1, frames.length, `Uploaded ${i + 1}/${frames.length}`, slide.name);
+  }
+
+  throwIfCancelled();
+  postProgress("remote", frames.length, frames.length, "Starting server build…", "Building PPTX on Railway…");
+  await fetchJson(`${REMOTE_API_BASE}/api/jobs/${created.jobId}/finalize`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+
+  for (let attempt = 0; attempt < 240; attempt++) {
+    throwIfCancelled();
+    const status = await fetchJson<{ status: string; error?: string | null; downloadUrl?: string | null }>(
+      `${REMOTE_API_BASE}/api/jobs/${created.jobId}/status`
+    );
+
+    if (status.status === "completed" && status.downloadUrl) {
+      postProgress("remote", frames.length, frames.length, "Server build complete", "Downloading PPTX…");
+      return status.downloadUrl;
+    }
+    if (status.status === "failed") {
+      throw new Error(status.error || "Remote export failed.");
+    }
+
+    postProgress("remote", frames.length, frames.length, "Building on Railway…", `Server status: ${status.status}`);
+    await sleep(1500);
+  }
+
+  throw new Error("Remote export timed out while waiting for the server to finish.");
+}
+
 // --- Messages ---
 figma.ui.onmessage = async (msg) => {
   try {
@@ -1043,7 +1120,19 @@ figma.ui.onmessage = async (msg) => {
 
       if (!frames.length) { postError("Selected frames not found. Click Refresh and try again."); return; }
 
+      const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
+
       postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
+
+      if (shouldUseRemotePptx(format)) {
+        const downloadUrl = await exportFramesRemotely(frames, exportScale, includeFullRaster, filename);
+        figma.ui.postMessage({
+          type: "REMOTE_EXPORT_READY",
+          filename,
+          downloadUrl
+        });
+        return;
+      }
 
       const slides: ExportSlide[] = [];
       for (let i = 0; i < frames.length; i++) {
@@ -1052,8 +1141,6 @@ figma.ui.onmessage = async (msg) => {
       }
 
       throwIfCancelled();
-
-      const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
 
       figma.ui.postMessage({
         type: "BATCH_BG_AND_ITEMS_V051",

@@ -4,6 +4,7 @@ import path from "node:path";
 
 const distDir = path.resolve("dist");
 fs.mkdirSync(distDir, { recursive: true });
+const apiBaseUrl = process.env.LUCY_API_BASE_URL || "";
 
 // 1) Build UI JS -> dist/ui.js
 await build({
@@ -13,7 +14,10 @@ await build({
   platform: "browser",
   target: ["es2017"],
   format: "iife",
-  outfile: "dist/ui.js"
+  outfile: "dist/ui.js",
+  define: {
+    __LUCY_API_BASE_URL__: JSON.stringify(apiBaseUrl)
+  }
 });
 
 // 2) Copy UI CSS -> dist/ui.css
@@ -50,7 +54,8 @@ await build({
   format: "iife",
   outfile: "dist/code.js",
   define: {
-    __html__: JSON.stringify(uiHtml)
+    __html__: JSON.stringify(uiHtml),
+    __LUCY_API_BASE_URL__: JSON.stringify(apiBaseUrl)
   }
 });
 

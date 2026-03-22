@@ -5,6 +5,12 @@
   "main": "dist/code.js",
   "ui": "dist/ui.html",
   "editorType": ["figma"],
-  "networkAccess": { "allowedDomains": ["none"] },
+  "networkAccess": {
+    "allowedDomains": [
+      "http://localhost:8787",
+      "https://lucy-pptx-ninja-api.up.railway.app",
+      "https://*.up.railway.app"
+    ]
+  },
   "documentAccess": "dynamic-page"
 }

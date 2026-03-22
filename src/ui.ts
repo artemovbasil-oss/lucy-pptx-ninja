@@ -1,9 +1,11 @@
 // src/ui.ts (v0.5.4-dev) — Font handling improvements + bgShape support + V051 handler
 import PptxGenJS from "pptxgenjs";
+declare const __LUCY_API_BASE_URL__: string;
 
 // Keep these in sync with your release notes
 const UI_VERSION = "v0.7";
 const UI_HIGHLIGHT = "Batch export + PDF";
+const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;
@@ -120,6 +122,15 @@ function uint8ToBase64(u8: Uint8Array): string {
 }
 
 function setStatus(msg: string) { statusEl.textContent = msg; }
+
+function triggerDownload(url: string, filename?: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  if (filename) a.download = filename;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.click();
+}
 
 type UiState = "idle" | "processing" | "success" | "error";
 function setState(state: UiState) {
@@ -882,6 +893,18 @@ window.onmessage = async (event) => {
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
     setBusy(false, "Export PPTX");
     uiCancelRequested = false;
+    return;
+  }
+
+  if (msg.type === "REMOTE_EXPORT_READY") {
+    try {
+      setProgress("done", 1, 1, "Done", REMOTE_API_BASE ? "Server export complete ✅" : "Export complete ✅");
+      setState("success");
+      triggerDownload(msg.downloadUrl, msg.filename ?? "Lucy_batch.pptx");
+    } finally {
+      setBusy(false, "Export PPTX");
+      uiCancelRequested = false;
+    }
     return;
   }
 
