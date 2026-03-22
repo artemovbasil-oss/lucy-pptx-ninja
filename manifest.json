@@ -9,6 +9,7 @@
     "allowedDomains": [
       "http://localhost:8787",
       "https://lucy-pptx-ninja-api.up.railway.app",
+      "https://lucy-pptx-ninja-production.up.railway.app",
       "https://*.up.railway.app"
     ]
   },
