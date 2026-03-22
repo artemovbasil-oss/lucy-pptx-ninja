@@ -6,11 +6,14 @@
   "ui": "dist/ui.html",
   "editorType": ["figma"],
   "networkAccess": {
+    "reasoning": "Lucy uploads exported slide data to a Railway-hosted backend to assemble large PPTX files and return the finished download.",
     "allowedDomains": [
-      "http://localhost:8787",
       "https://lucy-pptx-ninja-api.up.railway.app",
       "https://lucy-pptx-ninja-production.up.railway.app",
       "https://*.up.railway.app"
+    ],
+    "devAllowedDomains": [
+      "http://localhost:8787"
     ]
   },
   "documentAccess": "dynamic-page"
