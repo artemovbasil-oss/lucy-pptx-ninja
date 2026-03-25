@@ -28,6 +28,7 @@ let exportInProgress = false;
 const thumbCache = new Map<string, { width: number; height: number; thumbBytes: number[] | null }>();
 let selectionRefreshInFlight = false;
 let selectionRefreshQueued = false;
+const REMOTE_PPTX_MIN_FRAMES = 12;
 
 function throwIfCancelled() {
   if (cancelRequested) {
@@ -1560,7 +1561,9 @@ async function exportOneFrameRemoteSafe(
       throwIfCancelled();
 
       if (node.type === "TEXT") {
-        const payload = ultraStableMode ? getUltraSafeTextPayload(node) : getDirectTextPayload(node);
+        const payload = ultraStableMode
+          ? (getDirectTextPayload(node) || getUltraSafeTextPayload(node))
+          : (getDirectTextPayload(node) || getUltraSafeTextPayload(node));
         if (!payload) continue;
         const r = rectRelativeToFrame(node, frame);
         items.push({
@@ -1680,9 +1683,8 @@ async function exportOneFrameRemoteSafe(
     throwIfCancelled();
 
     if (node.type === "TEXT") {
-      const payload = getDirectTextPayload(node);
+      const payload = getDirectTextPayload(node) || getUltraSafeTextPayload(node);
       if (!payload) {
-        await addRasterItemSafe(node, "safeText");
         return;
       }
       const r = rectRelativeToFrame(node, frame);
@@ -1897,7 +1899,7 @@ figma.ui.onmessage = async (msg) => {
 
         const quality = String(msg.quality || "best");
         const format = String(msg.format || "pptx");
-        const useRemotePptx = shouldUseRemotePptx(format);
+        const useRemotePptx = shouldUseRemotePptx(format) && ids.length >= REMOTE_PPTX_MIN_FRAMES;
         const exportScale = getExportScale(format, quality, useRemotePptx);
         const includeFullRaster = format === "pdf";
 
@@ -1915,6 +1917,9 @@ figma.ui.onmessage = async (msg) => {
           return;
         }
 
+        if (format === "pptx" && shouldUseRemotePptx(format) && frames.length < REMOTE_PPTX_MIN_FRAMES) {
+          postStatus(`Using local high-fidelity export for ${frames.length} slides…`);
+        }
         await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
         return;
       } finally {
