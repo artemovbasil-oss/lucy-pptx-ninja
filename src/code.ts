@@ -415,6 +415,31 @@ function getDirectTextPayload(tn: TextNode): Omit<ExportText, "kind" | "z" | "id
   }
 }
 
+function getUltraSafeTextPayload(tn: TextNode): Omit<ExportText, "kind" | "z" | "id" | "x" | "y" | "w" | "h"> | null {
+  try {
+    const text = tn.characters ?? "";
+    if (!text.length) return null;
+
+    const alignRaw = tn.textAlignHorizontal;
+    const align = (!alignRaw || alignRaw === figma.mixed) ? "left" : alignMap(alignRaw as TextNode["textAlignHorizontal"]);
+
+    return {
+      text,
+      fontFamily: "Arial",
+      fontSize: 14,
+      lineHeightPx: null,
+      color: "000000",
+      align,
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: false,
+      italic: false,
+      uppercase: false
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ---- helpers ----
 function isRotationZero(node: SceneNode): boolean {
   const rot = typeof (node as any).rotation === "number" ? (node as any).rotation : 0;
@@ -1275,6 +1300,7 @@ async function exportOneFrameRemoteSafe(
 
   const items: ExportItem[] = [];
   const flattenForStability = total >= 10 || frame.children.length >= 24;
+  const ultraStableMode = total > 5;
   let z = 0;
 
   function nextZ(nodeId: string) {
@@ -1321,7 +1347,7 @@ async function exportOneFrameRemoteSafe(
     const hideForBg: TextNode[] = [];
     for (const tn of textNodes) {
       throwIfCancelled();
-      const payload = getDirectTextPayload(tn);
+      const payload = ultraStableMode ? getUltraSafeTextPayload(tn) : getDirectTextPayload(tn);
       if (!payload) continue;
       const r = rectRelativeToFrame(tn, frame);
       items.push({
@@ -1344,7 +1370,7 @@ async function exportOneFrameRemoteSafe(
     try {
       throwIfCancelled();
       postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, "Background");
-      const bgScale = Math.min(exportScale, 1.15);
+      const bgScale = ultraStableMode ? Math.min(exportScale, 1) : Math.min(exportScale, 1.15);
       const bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: bgScale } });
       bgPngBase64 = pngToBase64(bgPng);
     } finally {
