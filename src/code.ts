@@ -1451,6 +1451,35 @@ async function exportOneFrameRemoteSafe(
     const maxFlattenRasterItems = total >= 20 ? 24 : 48;
     let flattenRasterItems = 0;
 
+    function containsMaskNode(root: SceneNode): boolean {
+      if (isMaskNode(root)) return true;
+      if (!("children" in root)) return false;
+      const stack: SceneNode[] = [...(root.children as readonly SceneNode[])];
+      while (stack.length) {
+        const n = stack.pop()!;
+        if (isMaskNode(n)) return true;
+        if ("children" in n) stack.push(...(n.children as readonly SceneNode[]));
+      }
+      return false;
+    }
+
+    function hasRotation(node: SceneNode): boolean {
+      return !isRotationZero(node);
+    }
+
+    function isSafeStandaloneRasterNode(node: SceneNode): boolean {
+      if (node.parent?.id !== frame.id) return false;
+      if (isMaskNode(node)) return false;
+      if (containsMaskNode(node)) return false;
+      if (hasRotation(node)) return false;
+      if (hasAnyEffects(node)) return false;
+      if (hasBlendMode(node)) return false;
+      if (isContainer(node) && ("clipsContent" in node) && (node as FrameNode).clipsContent === true) return false;
+      // Most reliable separate-raster case: a plain rectangle with image fill.
+      if (node.type === "RECTANGLE" && hasImageFill(node)) return true;
+      return false;
+    }
+
     async function addFlattenRasterNode(node: SceneNode): Promise<boolean> {
       if (flattenRasterItems >= maxFlattenRasterItems) return false;
       const r = rectRelativeToFrame(node, frame);
@@ -1555,6 +1584,7 @@ async function exportOneFrameRemoteSafe(
       // Keep direct child raster candidates as separate pictures where feasible.
       if (node.parent?.id === frame.id && shouldRasterOverlay(node, frame)) {
         try {
+          if (!isSafeStandaloneRasterNode(node)) continue;
           const extracted = await addFlattenRasterNode(node);
           if (extracted) continue;
         } catch {
