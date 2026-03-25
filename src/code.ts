@@ -1139,8 +1139,7 @@ async function exportOneFrameRemoteSafe(
 
   async function addRasterItemSafe(node: SceneNode, idPrefix?: string) {
     const r = rectRelativeToFrame(node, frame);
-    const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
-    if (isOverflowing || r.w <= 0 || r.h <= 0) return;
+    if (r.w <= 0 || r.h <= 0) return;
 
     postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, node.name);
     const bytes = await rasterizeNodePNG(node, exportScale);
@@ -1159,7 +1158,25 @@ async function exportOneFrameRemoteSafe(
     throwIfCancelled();
 
     if (node.type === "TEXT") {
-      await addRasterItemSafe(node, "safeText");
+      const r = rectRelativeToFrame(node, frame);
+      const flags = getFirstCharFontStyleFlags(node);
+      const fs = getFirstCharFontSize(node);
+      items.push({
+        kind: "text",
+        z: nextZ(node.id),
+        id: node.id,
+        x: r.x, y: r.y, w: r.w, h: r.h,
+        text: node.characters ?? "",
+        fontFamily: getFirstCharFontFamily(node),
+        fontSize: fs,
+        lineHeightPx: getTextLineHeightPx(node, fs),
+        color: getFirstCharFillHex(node),
+        align: alignMap(node.textAlignHorizontal),
+        opacity: typeof node.opacity === "number" ? node.opacity : 1,
+        bold: flags.bold,
+        italic: flags.italic,
+        uppercase: getIsUppercase(node)
+      });
       return;
     }
 
@@ -1168,8 +1185,7 @@ async function exportOneFrameRemoteSafe(
       const fill = getSolidFill(node);
       const stroke = getSolidStroke(node);
       const radius = getCornerRadiusAny(node);
-      const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
-      if (!isOverflowing && (fill || stroke)) {
+      if (fill || stroke) {
         items.push({
           kind: "shape",
           z: nextZ(node.id),
@@ -1216,20 +1232,22 @@ async function exportOneFrameRemoteSafe(
       return;
     }
 
-    if (isContainer(node) || shouldRasterOverlay(node, frame)) {
-      await addRasterItemSafe(node, isContainer(node) ? "safeContainer" : "safeRaster");
-      return;
-    }
-
-    await addRasterItemSafe(node, "safeFallback");
+    await addRasterItemSafe(node, isContainer(node) ? "safeContainer" : "safeRaster");
   }
 
   for (const child of frame.children as readonly SceneNode[]) {
     await handleDirectChild(child as SceneNode);
   }
 
-  const smartBg = getSmartBackground(frame);
-  const bgShape = smartBg ?? { fill: "FFFFFF", opacity: 1 };
+  let bgShape: { fill: string; opacity: number } | null = { fill: "FFFFFF", opacity: 1 };
+  try {
+    if (isRotationZero(frame) && !hasAnyEffects(frame) && !hasImageFill(frame) && !hasAnyGradientFill(frame) && hasOnlySolidFills(frame)) {
+      const fill = getSolidFill(frame);
+      if (fill) bgShape = { fill, opacity: typeof frame.opacity === "number" ? frame.opacity : 1 };
+    }
+  } catch {
+    bgShape = { fill: "FFFFFF", opacity: 1 };
+  }
 
   throwIfCancelled();
   postProgress("export", idx, total, `Ready: ${frame.name}`);
