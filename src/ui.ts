@@ -129,14 +129,21 @@ function describeExportMode(format: string) {
   return REMOTE_API_BASE ? "Mode: Railway PPTX export" : "Mode: local PPTX export";
 }
 
-function triggerDownload(url: string, filename?: string) {
+async function triggerDownload(url: string, filename?: string) {
   const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${String(url).replace(/^\/+/, "")}`;
+  const response = await fetch(normalizedUrl);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `Download failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = normalizedUrl;
+  a.href = objectUrl;
   if (filename) a.download = filename;
-  a.target = "_blank";
-  a.rel = "noopener";
   a.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 function showFatalUiError(prefix: string, err: unknown) {
