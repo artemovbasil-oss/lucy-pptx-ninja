@@ -3,12 +3,21 @@ declare const __LUCY_API_BASE_URL__: string;
 
 figma.showUI(__html__, { width: 360, height: 600 });
 
-function postStatus(text: string) { figma.ui.postMessage({ type: "STATUS", text }); }
-function postError(text: string) { figma.ui.postMessage({ type: "ERROR", text }); }
-function postProgress(phase: string, current: number, total: number, label?: string, text?: string) {
-  figma.ui.postMessage({ type: "PROGRESS", phase, current, total, label, text });
+function safeUiPostMessage(message: Record<string, any>): boolean {
+  try {
+    figma.ui.postMessage(message);
+    return true;
+  } catch {
+    return false;
+  }
 }
-function postCancelled() { figma.ui.postMessage({ type: "CANCELLED" }); }
+
+function postStatus(text: string) { safeUiPostMessage({ type: "STATUS", text }); }
+function postError(text: string) { safeUiPostMessage({ type: "ERROR", text }); }
+function postProgress(phase: string, current: number, total: number, label?: string, text?: string) {
+  safeUiPostMessage({ type: "PROGRESS", phase, current, total, label, text });
+}
+function postCancelled() { safeUiPostMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
 const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
@@ -36,6 +45,22 @@ function getExportScale(format: string, quality: string, remotePptx: boolean): n
   }
 
   return quality === "low" ? 1 : quality === "medium" ? 2 : 3;
+}
+
+async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers || {});
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+
+  const res = await fetch(url, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return await res.json() as T;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
@@ -105,7 +130,7 @@ async function sendSelectionFrames() {
       return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: null };
     }
   }));
-  figma.ui.postMessage({
+  safeUiPostMessage({
     type: "SELECTION_FRAMES",
     frames: enriched
   });
@@ -1056,7 +1081,7 @@ function startRemoteExportSession(
     filename
   };
 
-  figma.ui.postMessage({
+  safeUiPostMessage({
     type: "REMOTE_EXPORT_BEGIN",
     filename,
     total: frames.length,
@@ -1078,7 +1103,7 @@ async function sendRemoteExportSlide(index: number) {
     session.includeFullRaster
   );
 
-  figma.ui.postMessage({
+  safeUiPostMessage({
     type: "REMOTE_EXPORT_SLIDE",
     filename: session.filename,
     index,
@@ -1108,7 +1133,7 @@ async function exportFramesLocally(
 
   throwIfCancelled();
 
-  figma.ui.postMessage({
+  safeUiPostMessage({
     type: "BATCH_BG_AND_ITEMS_V051",
     filename,
     slides,
