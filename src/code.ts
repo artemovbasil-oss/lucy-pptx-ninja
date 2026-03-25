@@ -1468,7 +1468,6 @@ async function exportOneFrameRemoteSafe(
     }
 
     function isSafeStandaloneRasterNode(node: SceneNode): boolean {
-      if (node.parent?.id !== frame.id) return false;
       if (isNearFullFrame(node, frame)) return false;
       if (isMaskNode(node)) return false;
       if (containsMaskNode(node)) return false;
@@ -1476,6 +1475,23 @@ async function exportOneFrameRemoteSafe(
       if (hasAnyEffects(node)) return false;
       if (hasBlendMode(node)) return false;
       if (isContainer(node) && ("clipsContent" in node) && (node as FrameNode).clipsContent === true) return false;
+      if (node.type === "TEXT") return false;
+
+      // Respect ancestor context: if parent chain introduces clipping/mask/effects/blends/opacity,
+      // keep node merged into background for visual fidelity.
+      let parent = node.parent as BaseNode | null;
+      while (parent && parent.id !== frame.id) {
+        if ("type" in parent) {
+          const p = parent as SceneNode;
+          if (isMaskNode(p)) return false;
+          if (hasRotation(p)) return false;
+          if (hasAnyEffects(p)) return false;
+          if (hasBlendMode(p)) return false;
+          if ("clipsContent" in p && (p as FrameNode).clipsContent === true) return false;
+          if (typeof (p as any).opacity === "number" && Math.abs(((p as any).opacity as number) - 1) > 0.001) return false;
+        }
+        parent = (parent as any).parent ?? null;
+      }
 
       // Separate simple, non-masked visual primitives as raster layers to preserve look.
       if (node.type === "RECTANGLE") {
@@ -1601,8 +1617,8 @@ async function exportOneFrameRemoteSafe(
         continue;
       }
 
-      // Keep direct child raster candidates as separate pictures where feasible.
-      if (node.parent?.id === frame.id && shouldRasterOverlay(node, frame)) {
+      // Keep safe raster candidates as separate pictures where feasible.
+      if (shouldRasterOverlay(node, frame)) {
         try {
           if (!isSafeStandaloneRasterNode(node)) continue;
           const extracted = await addFlattenRasterNode(node);
