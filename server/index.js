@@ -103,10 +103,14 @@ app.post("/api/jobs", async (req, res) => {
   const filename = typeof req.body?.filename === "string" && req.body.filename.trim()
     ? req.body.filename.trim()
     : "Lucy_batch.pptx";
+  const expectedSlides = Number.isInteger(req.body?.expectedSlides) && req.body.expectedSlides > 0
+    ? req.body.expectedSlides
+    : null;
 
   const meta = {
     id: jobId,
     filename,
+    expectedSlides,
     status: "uploading",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -143,6 +147,14 @@ app.post("/api/jobs/:jobId/finalize", async (req, res) => {
   const { jobId } = req.params;
   if (!fs.existsSync(getMetaPath(jobId))) {
     res.status(404).json({ error: "Job not found." });
+    return;
+  }
+
+  const current = await readJobMeta(jobId);
+  if (current.expectedSlides && current.slideCount < current.expectedSlides) {
+    res.status(409).json({
+      error: `Slides still uploading: received ${current.slideCount}/${current.expectedSlides}.`
+    });
     return;
   }
 

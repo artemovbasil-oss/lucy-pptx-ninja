@@ -222,6 +222,7 @@ function setBusy(next: boolean, ctaLabel?: string) {
 type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
 let currentFrames: FrameInfo[] = [];
 let remoteExportState: { jobId: string; filename: string; total: number; uploaded: number } | null = null;
+let remoteExportQueue: Promise<void> = Promise.resolve();
 
 function getOrderedFrameIdsFromDOM(): string[] {
   const els = Array.from(listEl.querySelectorAll(".item")) as HTMLElement[];
@@ -905,7 +906,7 @@ async function beginRemoteExport(filename: string, total: number) {
   setProgress("remote", 0, total, "Creating server job…", "Connecting to Railway…");
   const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
     method: "POST",
-    body: JSON.stringify({ filename })
+    body: JSON.stringify({ filename, expectedSlides: total })
   });
   remoteExportState = {
     jobId: created.jobId,
@@ -976,6 +977,11 @@ async function finalizeRemoteExport() {
   throw new Error("Remote export timed out while waiting for the server.");
 }
 
+async function runRemoteStep(task: () => Promise<void>) {
+  remoteExportQueue = remoteExportQueue.then(task, task);
+  await remoteExportQueue;
+}
+
 window.onmessage = async (event) => {
   const msg = event.data?.pluginMessage;
   if (!msg) return;
@@ -1013,27 +1019,33 @@ window.onmessage = async (event) => {
   }
 
   if (msg.type === "REMOTE_EXPORT_BEGIN") {
-    try {
-      await beginRemoteExport(msg.filename ?? "Lucy_batch.pptx", msg.total || 1);
-    } catch (err) {
-      remoteExportState = null;
-      throw err;
-    }
+    await runRemoteStep(async () => {
+      try {
+        await beginRemoteExport(msg.filename ?? "Lucy_batch.pptx", msg.total || 1);
+      } catch (err) {
+        remoteExportState = null;
+        throw err;
+      }
+    });
     return;
   }
 
   if (msg.type === "REMOTE_EXPORT_SLIDE") {
-    await uploadRemoteSlide(msg.index || 0, msg.total || 1, msg.slide);
+    await runRemoteStep(async () => {
+      await uploadRemoteSlide(msg.index || 0, msg.total || 1, msg.slide);
+    });
     return;
   }
 
   if (msg.type === "REMOTE_EXPORT_FINISH") {
-    try {
-      await finalizeRemoteExport();
-    } finally {
-      setBusy(false, "Export PPTX");
-      uiCancelRequested = false;
-    }
+    await runRemoteStep(async () => {
+      try {
+        await finalizeRemoteExport();
+      } finally {
+        setBusy(false, "Export PPTX");
+        uiCancelRequested = false;
+      }
+    });
     return;
   }
 
