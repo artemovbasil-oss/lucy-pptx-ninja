@@ -254,12 +254,32 @@
         transition: border-color .18s var(--ease), transform .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
         position: relative;
         overflow: hidden;
+        max-height: 80px;
+        transition:
+          border-color .18s var(--ease),
+          transform .18s var(--ease),
+          background .18s var(--ease),
+          box-shadow .18s var(--ease),
+          opacity .3s var(--ease),
+          max-height .35s var(--ease),
+          margin .35s var(--ease),
+          padding .35s var(--ease),
+          border-width .35s var(--ease);
       }
       .item:hover { border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 6px 20px rgba(0,0,0,0.28); transform: translateY(-1px); }
       .item:active { transform: translateY(0); }
       .item.exportingDone {
         border-color: rgba(110,231,183,0.35);
         background: rgba(110,231,183,0.08);
+      }
+      .item.exportOut {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.98);
+        max-height: 0;
+        margin: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-width: 0;
       }
       .item.exportingActive {
         border-color: rgba(var(--accent-rgb), 0.55);
@@ -331,6 +351,7 @@
       .locked { opacity: .92; }
       .locked .item { pointer-events: none; opacity: .8; }
       .locked .handle { cursor: default; }
+      .locked .dropSlot { display: none; }
 
       /* Footer */
       .footer {
@@ -352,6 +373,55 @@
       .showCancel .cancel { display: inline-flex; align-items: center; justify-content: center; }
 
       .muted { color: var(--muted); }
+      .successState {
+        margin-top: 8px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        min-height: 240px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.07);
+        background:
+          radial-gradient(circle at 20% 20%, rgba(133,205,219,0.16), transparent 45%),
+          radial-gradient(circle at 80% 30%, rgba(110,231,183,0.14), transparent 40%),
+          rgba(255,255,255,0.015);
+      }
+      .successState.show { display: flex; }
+      .successWrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+      .successSvg { width: 96px; height: 96px; }
+      .successCircle {
+        fill: none;
+        stroke: rgba(110,231,183,0.55);
+        stroke-width: 4;
+        stroke-linecap: round;
+        stroke-dasharray: 252;
+        stroke-dashoffset: 252;
+        animation: drawCircle .8s ease forwards;
+      }
+      .successCheck {
+        fill: none;
+        stroke: #8ef0c7;
+        stroke-width: 5;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-dasharray: 48;
+        stroke-dashoffset: 48;
+        animation: drawCheck .42s ease .72s forwards;
+      }
+      .successGlow {
+        fill: rgba(142,240,199,0.18);
+        filter: blur(8px);
+        transform-origin: center;
+        animation: pulseGlow 1.8s ease-in-out .2s infinite;
+      }
+      .successTitle { font-size: 14px; font-weight: 700; letter-spacing: .2px; }
+      .successSub { font-size: 11px; color: var(--muted); }
+      @keyframes drawCircle { to { stroke-dashoffset: 0; } }
+      @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+      @keyframes pulseGlow {
+        0%, 100% { opacity: .55; transform: scale(0.94); }
+        50% { opacity: .95; transform: scale(1.05); }
+      }
 
     </style>
   </head>
@@ -404,6 +474,17 @@
         </div>
 
         <div id="list" class="list"></div>
+        <div id="successState" class="successState">
+          <div class="successWrap">
+            <svg class="successSvg" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="successGlow" cx="50" cy="50" r="30"></circle>
+              <circle class="successCircle" cx="50" cy="50" r="40"></circle>
+              <path class="successCheck" d="M30 52 L45 67 L72 40"></path>
+            </svg>
+            <div class="successTitle">Export Complete</div>
+            <div class="successSub">PPTX is ready to download</div>
+          </div>
+        </div>
       </div>
 
       <div class="footer" id="footer">

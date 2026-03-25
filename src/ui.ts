@@ -4,7 +4,7 @@ declare const __LUCY_API_BASE_URL__: string;
 
 // Keep these in sync with your release notes
 const UI_VERSION = "v0.9";
-const UI_HIGHLIGHT = "no-modal export refactor";
+const UI_HIGHLIGHT = "the best pptx export ever";
 const DEFAULT_REMOTE_API_BASE = "https://lucy-pptx-ninja-production.up.railway.app";
 const REMOTE_API_BASE = ((typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim() || DEFAULT_REMOTE_API_BASE).replace(/\/$/, "");
 
@@ -18,6 +18,7 @@ const progTextEl = document.getElementById("progText") as HTMLDivElement | null;
 const stateDotEl = document.getElementById("stateDot") as HTMLDivElement | null;
 
 const listEl = document.getElementById("list") as HTMLDivElement;
+const successStateEl = document.getElementById("successState") as HTMLDivElement | null;
 const slidesCardEl = document.getElementById("slidesCard") as HTMLDivElement;
 const footerEl = document.getElementById("footer") as HTMLDivElement;
 
@@ -174,18 +175,67 @@ function setState(state: UiState) {
 
 let exportCurrent = 0;
 let exportTotal = 1;
+let visualTotalCount = 0;
+let visualCompletedCount = 0;
+let exportSucceeded = false;
+
+function hideSuccessState() {
+  successStateEl?.classList.remove("show");
+}
+
+function showSuccessState() {
+  successStateEl?.classList.add("show");
+}
+
+function removeDropSlots() {
+  Array.from(listEl.querySelectorAll(".dropSlot")).forEach((el) => el.remove());
+}
+
+function collapseNextSlideCard() {
+  const row = listEl.querySelector(".item:not(.exportOut)") as HTMLDivElement | null;
+  if (!row) return;
+  const next = row.nextElementSibling as HTMLElement | null;
+  if (next && next.classList.contains("dropSlot")) next.remove();
+  row.classList.add("exportOut");
+  window.setTimeout(() => {
+    row.remove();
+    applySlideProgressVisuals();
+    if (visualCompletedCount >= visualTotalCount && visualTotalCount > 0) {
+      showSuccessState();
+    }
+  }, 360);
+}
+
+function syncCompletedRowsWithProgress() {
+  if (!isBusy) return;
+  if (!visualTotalCount) return;
+  if (exportTotal !== visualTotalCount) return;
+  const target = Math.max(0, Math.min(visualTotalCount, exportCurrent));
+  while (visualCompletedCount < target) {
+    visualCompletedCount += 1;
+    collapseNextSlideCard();
+  }
+}
+
+function flushSlidesAndShowSuccess() {
+  removeDropSlots();
+  const rows = Array.from(listEl.querySelectorAll(".item:not(.exportOut)")) as HTMLDivElement[];
+  if (!rows.length) {
+    showSuccessState();
+    return;
+  }
+  rows.forEach((row, idx) => {
+    window.setTimeout(() => row.classList.add("exportOut"), idx * 40);
+    window.setTimeout(() => row.remove(), 380 + idx * 40);
+  });
+  window.setTimeout(() => showSuccessState(), 430 + rows.length * 40);
+}
 
 function applySlideProgressVisuals() {
   const rows = Array.from(listEl.querySelectorAll(".item")) as HTMLDivElement[];
   for (const row of rows) row.classList.remove("exportingActive", "exportingDone");
   if (!isBusy || !rows.length) return;
-  if (exportTotal !== rows.length) return;
-
-  const currentIndex = Math.max(0, Math.min(rows.length, exportCurrent));
-  for (let i = 0; i < rows.length; i++) {
-    if (i < currentIndex) rows[i].classList.add("exportingDone");
-  }
-  if (currentIndex < rows.length) rows[currentIndex].classList.add("exportingActive");
+  rows[0].classList.add("exportingActive");
 }
 
 function setProgress(phase: string, current: number, total: number, label?: string, text?: string) {
@@ -200,6 +250,7 @@ function setProgress(phase: string, current: number, total: number, label?: stri
   if (pctEl) pctEl.textContent = "";
   if (progTextEl) progTextEl.textContent = label ? label : `${c}/${t}`;
   if (text) setStatus(text);
+  syncCompletedRowsWithProgress();
   applySlideProgressVisuals();
 }
 
@@ -229,6 +280,13 @@ function setBusy(next: boolean, ctaLabel?: string) {
   if (!next) {
     exportCurrent = 0;
     exportTotal = 1;
+    visualTotalCount = 0;
+    visualCompletedCount = 0;
+    if (!exportSucceeded && currentFrames.length > 0) {
+      hideSuccessState();
+      renderList(currentFrames);
+      return;
+    }
   }
   applySlideProgressVisuals();
 }
@@ -260,6 +318,7 @@ function moveFrameToIndex(frameId: string, targetIndex: number) {
 }
 
 function renderList(frames: FrameInfo[]) {
+  if (!isBusy) hideSuccessState();
   listEl.innerHTML = "";
   if (!frames.length) {
     const empty = document.createElement("div");
@@ -369,6 +428,9 @@ function renderList(frames: FrameInfo[]) {
 
 function startExport() {
   if (isBusy) return;
+  if (successStateEl?.classList.contains("show") && currentFrames.length > 0) {
+    renderList(currentFrames);
+  }
 
   const ids = getOrderedFrameIdsFromDOM();
   if (!ids.length) {
@@ -376,6 +438,10 @@ function startExport() {
     return;
   }
 
+  exportSucceeded = false;
+  hideSuccessState();
+  visualTotalCount = ids.length;
+  visualCompletedCount = 0;
   uiCancelRequested = false;
   setBusy(true, "Exporting…");
   setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
@@ -620,6 +686,8 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
 
   setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
   setState("success");
+  exportSucceeded = true;
+  flushSlidesAndShowSuccess();
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -942,6 +1010,8 @@ async function buildPdfFromSlides(filename: string, slides: ExportSlide[], quali
 
   setProgress("done", 1, 1, `Done — ${slides.length} slides`, "Export complete ✅");
   setState("success");
+  exportSucceeded = true;
+  flushSlidesAndShowSuccess();
 }
 
 window.onmessage = async (event) => {
@@ -952,6 +1022,7 @@ window.onmessage = async (event) => {
 
   if (msg.type === "ERROR") {
     setStatus("Error:\n" + msg.text);
+    exportSucceeded = false;
     setBusy(false, "Export PPTX");
     setState("error");
     return;
@@ -975,6 +1046,7 @@ window.onmessage = async (event) => {
 
   if (msg.type === "CANCELLED") {
     setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
+    exportSucceeded = false;
     setBusy(false, "Export PPTX");
     uiCancelRequested = false;
     return;
@@ -984,6 +1056,8 @@ window.onmessage = async (event) => {
     try {
       setProgress("done", 1, 1, "Done", REMOTE_API_BASE ? "Server export complete ✅" : "Export complete ✅");
       setState("success");
+      exportSucceeded = true;
+      flushSlidesAndShowSuccess();
       await triggerDownload(msg.downloadUrl, msg.filename ?? "Lucy_batch.pptx");
     } finally {
       setBusy(false, "Export PPTX");
@@ -997,6 +1071,7 @@ window.onmessage = async (event) => {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
+      exportSucceeded = false;
       setBusy(false, "Export PPTX");
       setState("error");
       return;
@@ -1011,6 +1086,7 @@ window.onmessage = async (event) => {
       if (err?.message === "CANCELLED_UI") {
         setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
         setState("idle");
+        exportSucceeded = false;
         return;
       }
       throw err;
@@ -1026,6 +1102,7 @@ window.onmessage = async (event) => {
     const slides: ExportSlide[] = msg.slides || [];
     if (!slides.length) {
       setStatus("Error: empty batch.");
+      exportSucceeded = false;
       setBusy(false, "Export PPTX");
       setState("error");
       return;
@@ -1040,6 +1117,7 @@ window.onmessage = async (event) => {
       if (err?.message === "CANCELLED_UI") {
         setProgress("cancelled", 0, 1, "Cancelled", "Export cancelled.");
         setState("idle");
+        exportSucceeded = false;
         return;
       }
       throw err;
