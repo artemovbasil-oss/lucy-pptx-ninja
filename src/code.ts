@@ -1178,93 +1178,76 @@ async function exportOneFrameRemoteSafe(
     });
   }
 
-  async function walkSafe(node: SceneNode, depth = 0) {
+  async function handleDirectChild(node: SceneNode) {
     if (!("visible" in node) || (node as any).visible === false) return;
     throwIfCancelled();
 
-    if (node.id !== frame.id) {
-      if (node.type === "TEXT") {
-        addTextItemSafe(node);
-        return;
-      }
+    if (node.type === "TEXT") {
+      addTextItemSafe(node);
+      return;
+    }
 
-      if (node.type === "RECTANGLE" && isSafeEditableRect(node)) {
-        const r = rectRelativeToFrame(node, frame);
-        const fill = getSolidFill(node);
-        const stroke = getSolidStroke(node);
-        const radius = getCornerRadiusAny(node);
-        const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
-        if (!isOverflowing && (fill || stroke)) {
-          items.push({
-            kind: "shape",
-            z: nextZ(node.id),
-            id: node.id,
-            shape: "rect",
-            x: r.x, y: r.y, w: r.w, h: r.h,
-            fill, stroke, radius,
-            opacity: typeof node.opacity === "number" ? node.opacity : 1
-          });
-        }
-        return;
-      }
-
-      if (node.type === "ELLIPSE" && isSafeEditableEllipse(node)) {
-        const r = rectRelativeToFrame(node, frame);
-        const fill = getSolidFill(node);
-        const stroke = getSolidStroke(node);
-        if (fill || stroke) {
-          items.push({
-            kind: "shape",
-            z: nextZ(node.id),
-            id: node.id,
-            shape: "ellipse",
-            x: r.x, y: r.y, w: r.w, h: r.h,
-            fill, stroke, radius: 0,
-            opacity: typeof node.opacity === "number" ? node.opacity : 1
-          });
-        }
-        return;
-      }
-
-      if (node.type === "LINE" && isSafeEditableLine(node)) {
-        const r = rectRelativeToFrame(node, frame);
-        const stroke = getSolidStroke(node)!;
+    if (node.type === "RECTANGLE" && isSafeEditableRect(node)) {
+      const r = rectRelativeToFrame(node, frame);
+      const fill = getSolidFill(node);
+      const stroke = getSolidStroke(node);
+      const radius = getCornerRadiusAny(node);
+      const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
+      if (!isOverflowing && (fill || stroke)) {
         items.push({
           kind: "shape",
           z: nextZ(node.id),
           id: node.id,
-          shape: "line",
+          shape: "rect",
           x: r.x, y: r.y, w: r.w, h: r.h,
-          stroke,
+          fill, stroke, radius,
           opacity: typeof node.opacity === "number" ? node.opacity : 1
         });
         return;
       }
+    }
 
-      const shouldRasterContainer =
-        (depth >= 1 && isContainer(node)) ||
-        shouldRasterizeConservativeContainer(node, frame) ||
-        (node.type === "FRAME" && depth >= 1 && !isNearFullFrame(node, frame));
-
-      if (shouldRasterContainer) {
-        await addRasterItemSafe(node, "safeContainer");
-        return;
-      }
-
-      if (shouldRasterOverlay(node, frame)) {
-        await addRasterItemSafe(node, "safeRaster");
+    if (node.type === "ELLIPSE" && isSafeEditableEllipse(node)) {
+      const r = rectRelativeToFrame(node, frame);
+      const fill = getSolidFill(node);
+      const stroke = getSolidStroke(node);
+      if (fill || stroke) {
+        items.push({
+          kind: "shape",
+          z: nextZ(node.id),
+          id: node.id,
+          shape: "ellipse",
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          fill, stroke, radius: 0,
+          opacity: typeof node.opacity === "number" ? node.opacity : 1
+        });
         return;
       }
     }
 
-    if ("children" in node) {
-      for (const ch of node.children as readonly SceneNode[]) {
-        await walkSafe(ch as SceneNode, depth + 1);
-      }
+    if (node.type === "LINE" && isSafeEditableLine(node)) {
+      const r = rectRelativeToFrame(node, frame);
+      const stroke = getSolidStroke(node)!;
+      items.push({
+        kind: "shape",
+        z: nextZ(node.id),
+        id: node.id,
+        shape: "line",
+        x: r.x, y: r.y, w: r.w, h: r.h,
+        stroke,
+        opacity: typeof node.opacity === "number" ? node.opacity : 1
+      });
+      return;
+    }
+
+    if (isContainer(node) || shouldRasterOverlay(node, frame)) {
+      await addRasterItemSafe(node, isContainer(node) ? "safeContainer" : "safeRaster");
     }
   }
 
-  await walkSafe(frame, 0);
+  for (const child of frame.children as readonly SceneNode[]) {
+    await handleDirectChild(child as SceneNode);
+  }
 
   const smartBg = getSmartBackground(frame);
   const bgShape = smartBg ?? { fill: "FFFFFF", opacity: 1 };
