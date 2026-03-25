@@ -42,6 +42,16 @@ function shouldUseRemotePptx(format: string): boolean {
   return format === "pptx" && REMOTE_API_CANDIDATES.length > 0;
 }
 
+function canToggleNodeVisibility(node: SceneNode): boolean {
+  try {
+    const current = node.visible;
+    node.visible = current;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getExportScale(format: string, quality: string, remotePptx: boolean): number {
   if (format === "pdf") {
     return quality === "low" ? 1 : quality === "medium" ? 1.5 : 2;
@@ -795,13 +805,22 @@ function collectTextDescendants(node: SceneNode): TextNode[] {
 async function rasterizeContainerBackgroundOnly(container: SceneNode, scale = 2): Promise<Uint8Array> {
   const texts = collectTextDescendants(container);
   const prev = new Map<string, boolean>();
-  for (const t of texts) { prev.set(t.id, t.visible); t.visible = false; }
+  for (const t of texts) {
+    try {
+      prev.set(t.id, t.visible);
+      t.visible = false;
+    } catch {
+      // Ignore nodes whose visibility can't be toggled in current context.
+    }
+  }
   try {
     return await container.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: scale } });
   } finally {
     for (const t of texts) {
       const v = prev.get(t.id);
-      if (typeof v === "boolean") t.visible = v;
+      if (typeof v === "boolean") {
+        try { t.visible = v; } catch { /* ignore */ }
+      }
     }
   }
 }
@@ -1289,7 +1308,14 @@ async function exportOneFrame(
     postProgress("export", idx - 1, total, `Exporting background: ${frame.name}`);
 
     const prevVisible = new Map<string, boolean>();
-    for (const n of toHide) { prevVisible.set(n.id, (n as any).visible); (n as any).visible = false; }
+    for (const n of toHide) {
+      try {
+        prevVisible.set(n.id, (n as any).visible);
+        (n as any).visible = false;
+      } catch {
+        // If visibility cannot be toggled, keep node in background.
+      }
+    }
 
     let bgPng: Uint8Array;
     const prevClips = frame.clipsContent;
@@ -1301,7 +1327,9 @@ async function exportOneFrame(
       frame.clipsContent = prevClips;
       for (const n of toHide) {
         const v = prevVisible.get(n.id);
-        if (typeof v === "boolean") (n as any).visible = v;
+        if (typeof v === "boolean") {
+          try { (n as any).visible = v; } catch { /* ignore */ }
+        }
       }
     }
     bgPngBytes = Array.from(bgPng);
@@ -1477,6 +1505,7 @@ async function exportOneFrameRemoteSafe(
       if (hasBlendMode(node)) return false;
       if (isContainer(node) && ("clipsContent" in node) && (node as FrameNode).clipsContent === true) return false;
       if (node.type === "TEXT") return false;
+      if (!canToggleNodeVisibility(node)) return false;
 
       // Respect ancestor context: if parent chain introduces clipping/mask/effects/blends/opacity,
       // keep node merged into background for visual fidelity.
@@ -1484,6 +1513,7 @@ async function exportOneFrameRemoteSafe(
       while (parent && parent.id !== frame.id) {
         if ("type" in parent) {
           const p = parent as SceneNode;
+          if (p.type === "INSTANCE" || p.type === "COMPONENT" || p.type === "COMPONENT_SET") return false;
           if (isMaskNode(p)) return false;
           if (hasRotation(p)) return false;
           if (hasAnyEffects(p)) return false;
@@ -1645,8 +1675,12 @@ async function exportOneFrameRemoteSafe(
 
     const prevVisible = new Map<string, boolean>();
     for (const n of hideForBg) {
-      prevVisible.set(n.id, n.visible);
-      n.visible = false;
+      try {
+        prevVisible.set(n.id, n.visible);
+        n.visible = false;
+      } catch {
+        // Keep node in background if visibility cannot be toggled.
+      }
     }
 
     let bgPngBase64: string | null = null;
@@ -1659,7 +1693,9 @@ async function exportOneFrameRemoteSafe(
     } finally {
       for (const n of hideForBg) {
         const v = prevVisible.get(n.id);
-        if (typeof v === "boolean") n.visible = v;
+        if (typeof v === "boolean") {
+          try { n.visible = v; } catch { /* ignore */ }
+        }
       }
     }
 
