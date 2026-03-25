@@ -1402,8 +1402,8 @@ async function exportOneFrameRemoteSafe(
   }
 
   const items: ExportItem[] = [];
-  const flattenForStability = total >= 8 || frame.children.length >= 48;
-  const ultraStableMode = total >= 16 || frame.children.length >= 90;
+  const flattenForStability = total >= 20 || frame.children.length >= 140;
+  const ultraStableMode = total >= 30 || frame.children.length >= 180;
   let z = 0;
 
   function nextZ(nodeId: string) {
