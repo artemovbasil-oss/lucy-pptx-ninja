@@ -27,11 +27,6 @@ const qualitySelect = document.getElementById("qualitySelect") as HTMLDivElement
 const versionEl = document.getElementById("version") as HTMLDivElement | null;
 const tinyHintEl = document.getElementById("tinyHint") as HTMLDivElement | null;
 
-// Legacy overlay nodes (no longer used)
-const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
-const overlayHintEl = document.getElementById("overlayHint") as HTMLDivElement | null;
-const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonElement | null;
-
 
 const ctaTextEl = exportBtn.querySelector(".ctaText") as HTMLSpanElement | null;
 
@@ -193,11 +188,6 @@ let uiCancelRequested = false;
 
 function setBusy(next: boolean, ctaLabel?: string) {
   isBusy = next;
-  if (busyOverlayEl) {
-    busyOverlayEl.classList.remove("show");
-    busyOverlayEl.setAttribute("aria-hidden", "true");
-  }
-
   setState(next ? "processing" : "idle");
 
   exportBtn.disabled = next;
@@ -383,14 +373,12 @@ exportBtn.onclick = () => {
   }
 };
 
-cancelBtn?.addEventListener('click', () => {
+cancelBtn?.addEventListener("click", () => {
   if (!isBusy) return;
   uiCancelRequested = true;
   setProgress("cancel", 0, 1, "Cancelling…", "Stopping export…");
   parent.postMessage({ pluginMessage: { type: "CANCEL_EXPORT" } }, "*");
 });
-
-overlayCancelBtn?.addEventListener("click", () => {});
 
 // Ask selection on open
 parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");

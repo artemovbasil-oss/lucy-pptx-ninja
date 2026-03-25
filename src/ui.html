@@ -315,70 +315,6 @@
 
       .muted { color: var(--muted); }
 
-      /* Busy overlay */
-      .busyOverlay {
-        position: fixed;
-        inset: 0;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0,0,0,0.66);
-        backdrop-filter: blur(6px);
-        z-index: 999;
-      }
-      .busyOverlay.show { display: flex; }
-
-      .busyCard {
-        width: 300px;
-        padding: 14px 14px 12px;
-        border-radius: 16px;
-        border: 1px solid var(--line);
-        background: linear-gradient(180deg, rgba(18,18,21,0.98), rgba(22,22,26,0.98));
-        box-shadow: 0 16px 46px rgba(0,0,0,0.55);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-      }
-      .overlayProgress {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .busyText { text-align: center; }
-      .busyTitle { font-weight: 900; letter-spacing: .2px; }
-      .busyHint { margin-top: 4px; color: var(--muted); }
-      .overlayCancel {
-        width: 54px;
-        height: 54px;
-        border-radius: 999px;
-        border: 2px solid rgba(248, 113, 113, 0.4);
-        background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.16), rgba(248,113,113,0.18));
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: transform .12s var(--ease), box-shadow .18s var(--ease), border-color .18s var(--ease);
-      }
-      .overlayCancel svg {
-        width: 22px;
-        height: 22px;
-        stroke: #F87171;
-        stroke-width: 2.4;
-        stroke-linecap: round;
-      }
-      .overlayCancel:hover {
-        border-color: rgba(248, 113, 113, 0.8);
-        box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.15);
-        transform: translateY(-1px);
-      }
-      .overlayCancel:active { transform: translateY(0) scale(0.98); }
-      .overlayCancel:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.2), 0 0 0 1px rgba(248, 113, 113, 0.6) inset;
-      }
     </style>
   </head>
 
@@ -423,7 +359,17 @@
         <div id="list" class="list"></div>
       </div>
 
+      <div class="card" id="statusCard">
+        <div class="progress"><div id="bar" class="bar"></div></div>
+        <div class="progline">
+          <div id="progText" class="muted">Idle</div>
+          <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+        </div>
+        <div id="status" class="status">Select one or more frames.</div>
+      </div>
+
       <div class="footer" id="footer">
+        <button id="cancel" class="btn btnDanger cancel" type="button">Cancel</button>
         <button id="export" class="btn btnPrimary cta">
           <span class="ctaInner">
             <span class="ctaText">Export PPTX</span>
@@ -432,29 +378,6 @@
       </div>
     </div>
 
-
-    <!-- Busy overlay (shown only during export) -->
-    <div id="busyOverlay" class="busyOverlay" aria-hidden="true">
-      <div class="busyCard" role="dialog" aria-label="Exporting">
-        <div class="busyText">
-          <div class="busyTitle">Exporting…</div>
-          <div id="overlayHint" class="busyHint">Lucy is converting your slides</div>
-        </div>
-        <div class="overlayProgress">
-          <div class="progress"><div id="bar" class="bar"></div></div>
-          <div class="progline">
-            <div id="progText" class="muted">Idle</div>
-            <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
-          </div>
-          <div id="status" class="status">Select one or more frames.</div>
-        </div>
-        <button id="overlayCancel" class="overlayCancel" aria-label="Cancel export">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      </div>
-    </div>
 
     <script src="ui.js"></script>
   </body>
