@@ -645,8 +645,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
 
         const rawText = String(it.text);
         const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
-
-        slide.addText(finalText, {
+        const baseTextOpts = {
           x: pxToIn(xPx),
           y: pxToIn(yPx),
           w: pxToIn(wPx),
@@ -663,7 +662,40 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
           valign: "top",
           transparency: tPct,
           ...(lineSpacingPt ? { lineSpacing: lineSpacingPt } : {})
-        });
+        };
+
+        if (Array.isArray((it as any).runs) && (it as any).runs.length > 0) {
+          const richRuns = (it as any).runs
+            .map((r: any) => {
+              const runTextRaw = String(r.text || "");
+              if (!runTextRaw.length) return null;
+              const runText = r.uppercase ? runTextRaw.toUpperCase() : runTextRaw;
+              const runFsPx = Number(r.fontSize || it.fontSize || 14) * trf.s;
+              const runLhPx = typeof r.lineHeightPx === "number" ? r.lineHeightPx * trf.s : null;
+              const runLineSpacingPt = runLhPx ? Math.max(1, Math.round(pxToPt(runLhPx))) : undefined;
+              const runFontFace = mapFontFamily(r.fontFamily || it.fontFamily);
+              fontsUsed.add(runFontFace);
+              return {
+                text: runText,
+                options: {
+                  fontFace: runFontFace,
+                  fontSize: Math.max(1, Math.round(pxToPt(runFsPx))),
+                  bold: !!r.bold,
+                  italic: !!r.italic,
+                  color: r.color || it.color || "000000",
+                  ...(runLineSpacingPt ? { lineSpacing: runLineSpacingPt } : {})
+                }
+              };
+            })
+            .filter(Boolean);
+
+          if (richRuns.length > 0) {
+            slide.addText(richRuns as any, baseTextOpts as any);
+            continue;
+          }
+        }
+
+        slide.addText(finalText, baseTextOpts as any);
       }
     }
   }

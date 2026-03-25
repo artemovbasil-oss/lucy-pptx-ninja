@@ -966,9 +966,10 @@ async function exportOneFrame(
   }
 
   function addTextItem(tn: TextNode) {
+    const payload = getDirectTextPayload(tn) || getUltraSafeTextPayload(tn);
+    if (!payload) return;
+
     const r = rectRelativeToFrame(tn, frame);
-    const flags = getFirstCharFontStyleFlags(tn);
-    const fs = getFirstCharFontSize(tn);
 
     z += 1;
     zById.set(tn.id, z);
@@ -978,16 +979,7 @@ async function exportOneFrame(
       z,
       id: tn.id,
       x: r.x, y: r.y, w: r.w, h: r.h,
-      text: tn.characters ?? "",
-      fontFamily: getFirstCharFontFamily(tn),
-      fontSize: fs,
-      lineHeightPx: getTextLineHeightPx(tn, fs),
-      color: getFirstCharFillHex(tn),
-      align: alignMap(tn.textAlignHorizontal),
-      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-      bold: flags.bold,
-      italic: flags.italic,
-      uppercase: getIsUppercase(tn)
+      ...payload
     });
 
     markHide(tn);
