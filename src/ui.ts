@@ -130,8 +130,9 @@ function describeExportMode(format: string) {
 }
 
 function triggerDownload(url: string, filename?: string) {
+  const normalizedUrl = /^https?:\/\//i.test(url) ? url : `https://${String(url).replace(/^\/+/, "")}`;
   const a = document.createElement("a");
-  a.href = url;
+  a.href = normalizedUrl;
   if (filename) a.download = filename;
   a.target = "_blank";
   a.rel = "noopener";

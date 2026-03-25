@@ -59,7 +59,11 @@ async function writeJobMeta(jobId, patch) {
 function getBaseUrl(req) {
   const envBase = process.env.PUBLIC_BASE_URL || process.env.LUCY_PUBLIC_BASE_URL;
   if (envBase) return envBase.replace(/\/$/, "");
-  return `${req.protocol}://${req.get("host")}`;
+
+  const forwardedProto = req.get("x-forwarded-proto");
+  const proto = forwardedProto || req.protocol || "https";
+  const host = req.get("host");
+  return `${proto}://${host}`;
 }
 
 async function buildJob(jobId) {
