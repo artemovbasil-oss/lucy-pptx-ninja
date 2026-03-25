@@ -1493,16 +1493,15 @@ async function exportOneFrameRemoteSafe(
         parent = (parent as any).parent ?? null;
       }
 
+      // If there is real editable text inside, we keep node in background and emit text separately.
+      if (containsTextDescendant(node)) return false;
+
       // Separate simple, non-masked visual primitives as raster layers to preserve look.
       if (node.type === "RECTANGLE") {
-        if (hasImageFill(node)) return true;
-        if (hasAnyGradientFill(node)) return true;
-        if (!hasOnlySolidFills(node)) return true;
+        return true;
       }
       if (node.type === "ELLIPSE") {
-        if (hasImageFill(node)) return true;
-        if (hasAnyGradientFill(node)) return true;
-        if (!hasOnlySolidFills(node)) return true;
+        return true;
       }
       if (
         node.type === "VECTOR" ||
@@ -1510,6 +1509,19 @@ async function exportOneFrameRemoteSafe(
         node.type === "STAR" ||
         node.type === "POLYGON"
       ) {
+        return true;
+      }
+      if (
+        node.type === "GROUP" ||
+        node.type === "INSTANCE" ||
+        node.type === "COMPONENT" ||
+        node.type === "COMPONENT_SET"
+      ) {
+        const r = rectRelativeToFrame(node, frame);
+        const area = r.w * r.h;
+        const frameArea = Math.max(1, frame.width * frame.height);
+        if (area / frameArea > 0.32) return false;
+        if (Math.max(r.w, r.h) > Math.max(frame.width, frame.height) * 0.6) return false;
         return true;
       }
 
@@ -1618,9 +1630,8 @@ async function exportOneFrameRemoteSafe(
       }
 
       // Keep safe raster candidates as separate pictures where feasible.
-      if (shouldRasterOverlay(node, frame)) {
+      if (isSafeStandaloneRasterNode(node)) {
         try {
-          if (!isSafeStandaloneRasterNode(node)) continue;
           const extracted = await addFlattenRasterNode(node);
           if (extracted) continue;
         } catch {
