@@ -28,7 +28,6 @@ let exportInProgress = false;
 const thumbCache = new Map<string, { width: number; height: number; thumbBytes: number[] | null }>();
 let selectionRefreshInFlight = false;
 let selectionRefreshQueued = false;
-const REMOTE_PPTX_MIN_FRAMES = 12;
 
 function throwIfCancelled() {
   if (cancelRequested) {
@@ -1935,7 +1934,7 @@ figma.ui.onmessage = async (msg) => {
 
         const quality = String(msg.quality || "best");
         const format = String(msg.format || "pptx");
-        const useRemotePptx = shouldUseRemotePptx(format) && ids.length >= REMOTE_PPTX_MIN_FRAMES;
+        const useRemotePptx = shouldUseRemotePptx(format);
         const exportScale = getExportScale(format, quality, useRemotePptx);
         const includeFullRaster = format === "pdf";
 
@@ -1953,9 +1952,6 @@ figma.ui.onmessage = async (msg) => {
           return;
         }
 
-        if (format === "pptx" && shouldUseRemotePptx(format) && frames.length < REMOTE_PPTX_MIN_FRAMES) {
-          postStatus(`Using local high-fidelity export for ${frames.length} slides…`);
-        }
         await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
         return;
       } finally {
