@@ -957,9 +957,11 @@ window.onmessage = async (event) => {
   if (msg.type === "SELECTION_FRAMES") {
     currentFrames = msg.frames || [];
     renderList(currentFrames);
-    setStatus(currentFrames.length ? `Selected frames: ${currentFrames.length}` : "Select one or more frames.");
-    setProgress("idle", 0, 1, "Idle");
-    setBusy(false, "Export PPTX");
+    if (!isBusy) {
+      setStatus(currentFrames.length ? `Selected frames: ${currentFrames.length}` : "Select one or more frames.");
+      setProgress("idle", 0, 1, "Idle");
+      setBusy(false, "Export PPTX");
+    }
     return;
   }
 
