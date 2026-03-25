@@ -3,8 +3,8 @@ import PptxGenJS from "pptxgenjs";
 declare const __LUCY_API_BASE_URL__: string;
 
 // Keep these in sync with your release notes
-const UI_VERSION = "v0.7";
-const UI_HIGHLIGHT = "Batch export + PDF";
+const UI_VERSION = "v0.8";
+const UI_HIGHLIGHT = "large decks support";
 const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
@@ -231,10 +231,28 @@ type FrameInfo = { id: string; name: string; width: number; height: number; thum
 let currentFrames: FrameInfo[] = [];
 let remoteExportState: { jobId: string; filename: string; total: number; uploaded: number } | null = null;
 let remoteExportQueue: Promise<void> = Promise.resolve();
+let draggedFrameId: string | null = null;
 
 function getOrderedFrameIdsFromDOM(): string[] {
   const els = Array.from(listEl.querySelectorAll(".item")) as HTMLElement[];
   return els.map((el) => String(el.dataset.id)).filter(Boolean);
+}
+
+function clearDropIndicators() {
+  Array.from(listEl.querySelectorAll(".dropSlot")).forEach((el) => el.classList.remove("isActive"));
+  Array.from(listEl.querySelectorAll(".item")).forEach((el) => el.classList.remove("isDragSource"));
+}
+
+function moveFrameToIndex(frameId: string, targetIndex: number) {
+  const fromIndex = currentFrames.findIndex((frame) => frame.id === frameId);
+  if (fromIndex < 0) return;
+
+  const nextFrames = [...currentFrames];
+  const [moved] = nextFrames.splice(fromIndex, 1);
+  const clampedIndex = Math.max(0, Math.min(targetIndex, nextFrames.length));
+  nextFrames.splice(clampedIndex, 0, moved);
+  currentFrames = nextFrames;
+  renderList(currentFrames);
 }
 
 function renderList(frames: FrameInfo[]) {
@@ -250,7 +268,43 @@ function renderList(frames: FrameInfo[]) {
 
   exportBtn.disabled = isBusy ? true : false;
 
-  for (const f of frames) {
+  const createDropSlot = (targetIndex: number) => {
+    const slot = document.createElement("div");
+    slot.className = "dropSlot";
+    slot.dataset.index = String(targetIndex);
+
+    const line = document.createElement("div");
+    line.className = "dropSlotLine";
+    slot.appendChild(line);
+
+    slot.addEventListener("dragover", (event) => {
+      if (isBusy || !draggedFrameId) return;
+      event.preventDefault();
+      clearDropIndicators();
+      slot.classList.add("isActive");
+    });
+
+    slot.addEventListener("dragleave", (event) => {
+      if (!(event.currentTarget instanceof HTMLElement)) return;
+      if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) return;
+      slot.classList.remove("isActive");
+    });
+
+    slot.addEventListener("drop", (event) => {
+      if (isBusy || !draggedFrameId) return;
+      event.preventDefault();
+      moveFrameToIndex(draggedFrameId, targetIndex);
+      draggedFrameId = null;
+      clearDropIndicators();
+    });
+
+    return slot;
+  };
+
+  listEl.appendChild(createDropSlot(0));
+
+  for (let index = 0; index < frames.length; index++) {
+    const f = frames[index];
     const row = document.createElement("div");
     row.className = "item";
     row.draggable = true;
@@ -290,41 +344,21 @@ function renderList(frames: FrameInfo[]) {
 
     row.addEventListener("dragstart", (ev) => {
       if (isBusy) return;
-      row.classList.add("dragging");
+      draggedFrameId = f.id;
+      row.classList.add("dragging", "isDragSource");
       ev.dataTransfer?.setData("text/plain", f.id);
+      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "move";
       ev.dataTransfer?.setDragImage(row, 12, 12);
     });
 
     row.addEventListener("dragend", () => {
-      row.classList.remove("dragging");
-      Array.from(listEl.querySelectorAll(".item")).forEach((el) => el.classList.remove("over"));
-      const ids = getOrderedFrameIdsFromDOM();
-      currentFrames = ids.map((id) => currentFrames.find((x) => x.id === id)).filter(Boolean) as FrameInfo[];
-    });
-
-    row.addEventListener("dragover", (e) => {
-      if (isBusy) return;
-      e.preventDefault();
-      row.classList.add("over");
-    });
-
-    row.addEventListener("dragleave", () => row.classList.remove("over"));
-
-    row.addEventListener("drop", (e) => {
-      if (isBusy) return;
-      e.preventDefault();
-      row.classList.remove("over");
-      const draggedId = e.dataTransfer?.getData("text/plain");
-      if (!draggedId) return;
-
-      const draggedEl = listEl.querySelector(`.item[data-id="${draggedId}"]`) as HTMLElement | null;
-      if (!draggedEl) return;
-      if (draggedEl === row) return;
-
-      listEl.insertBefore(draggedEl, row);
+      draggedFrameId = null;
+      row.classList.remove("dragging", "isDragSource");
+      clearDropIndicators();
     });
 
     listEl.appendChild(row);
+    listEl.appendChild(createDropSlot(index + 1));
   }
 }
 

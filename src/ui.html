@@ -44,9 +44,8 @@
         overflow-y: auto;
       }
 
-      .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-      .title { font-weight: 700; letter-spacing: .2px; font-size: 14px; }
-      .subtitle { color: var(--muted); margin-top: 2px; font-size: 11px; }
+      .header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .subtitle { color: var(--muted); font-size: 11px; }
 
       .card {
         background: #17171c;
@@ -208,6 +207,32 @@
 
       /* Slides list */
       .list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+      .dropSlot {
+        position: relative;
+        height: 10px;
+        margin: -2px 0;
+        border-radius: 999px;
+        transition: height .16s var(--ease), margin .16s var(--ease);
+      }
+      .dropSlotLine {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        top: 50%;
+        height: 2px;
+        border-radius: 999px;
+        background: transparent;
+        transform: translateY(-50%);
+        transition: background .16s var(--ease), box-shadow .16s var(--ease);
+      }
+      .dropSlot.isActive {
+        height: 22px;
+        margin: 2px 0;
+      }
+      .dropSlot.isActive .dropSlotLine {
+        background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.25), rgba(var(--accent-rgb), 0.95), rgba(var(--accent-rgb), 0.25));
+        box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.12);
+      }
       .item {
         display: grid;
         grid-template-columns: 18px 44px 1fr auto;
@@ -259,7 +284,10 @@
         box-shadow: 0 10px 26px rgba(0,0,0,0.35), 0 0 0 3px rgba(var(--accent-rgb), 0.14);
         transform: scale(0.995);
       }
-      .item.over { outline: 1px dashed rgba(var(--accent-rgb), 0.85); outline-offset: 2px; background: rgba(var(--accent-rgb), 0.06); }
+      .item.isDragSource {
+        border-color: rgba(var(--accent-rgb), 0.5);
+        background: rgba(var(--accent-rgb), 0.08);
+      }
 
       /* Locked interactions while loading */
       .locked { opacity: .92; }
@@ -357,10 +385,7 @@
   <body>
     <div class="wrap" id="wrap">
       <div class="header">
-        <div>
-          <div class="title">Lucy — PPTX Ninja</div>
-          <div class="subtitle" id="version">v0.7 · Batch export + PDF</div>
-        </div>
+        <div class="subtitle" id="version">v0.8 · large decks support</div>
       </div>
 
       <div class="card">
@@ -391,7 +416,7 @@
         <div class="cardHeader">
           <div>
             <div class="label">Slides order</div>
-            <div class="hint">Drag to reorder. Export will follow this order.</div>
+            <div class="hint">Drag a slide and drop it on the glowing line between slides.</div>
           </div>
         </div>
 
