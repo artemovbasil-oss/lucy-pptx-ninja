@@ -1137,30 +1137,6 @@ async function exportOneFrameRemoteSafe(
     return z;
   }
 
-  function addTextItemSafe(tn: TextNode) {
-    const r = rectRelativeToFrame(tn, frame);
-    const flags = getFirstCharFontStyleFlags(tn);
-    const fs = getFirstCharFontSize(tn);
-    const itemZ = nextZ(tn.id);
-
-    items.push({
-      kind: "text",
-      z: itemZ,
-      id: tn.id,
-      x: r.x, y: r.y, w: r.w, h: r.h,
-      text: tn.characters ?? "",
-      fontFamily: getFirstCharFontFamily(tn),
-      fontSize: fs,
-      lineHeightPx: getTextLineHeightPx(tn, fs),
-      color: getFirstCharFillHex(tn),
-      align: alignMap(tn.textAlignHorizontal),
-      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-      bold: flags.bold,
-      italic: flags.italic,
-      uppercase: getIsUppercase(tn)
-    });
-  }
-
   async function addRasterItemSafe(node: SceneNode, idPrefix?: string) {
     const r = rectRelativeToFrame(node, frame);
     const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
@@ -1183,7 +1159,7 @@ async function exportOneFrameRemoteSafe(
     throwIfCancelled();
 
     if (node.type === "TEXT") {
-      addTextItemSafe(node);
+      await addRasterItemSafe(node, "safeText");
       return;
     }
 
@@ -1242,7 +1218,10 @@ async function exportOneFrameRemoteSafe(
 
     if (isContainer(node) || shouldRasterOverlay(node, frame)) {
       await addRasterItemSafe(node, isContainer(node) ? "safeContainer" : "safeRaster");
+      return;
     }
+
+    await addRasterItemSafe(node, "safeFallback");
   }
 
   for (const child of frame.children as readonly SceneNode[]) {
