@@ -21,7 +21,6 @@ function postCancelled() { safeUiPostMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
 const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
-let remoteExportSession: RemoteExportSession | null = null;
 
 function throwIfCancelled() {
   if (cancelRequested) {
@@ -198,13 +197,6 @@ type ExportSlide = {
   bgPngBytes: number[]; bgShape?: { fill: string; opacity: number } | null;
   fullPngBytes?: number[] | null;
   items: ExportItem[];
-};
-
-type RemoteExportSession = {
-  frames: FrameNode[];
-  exportScale: number;
-  includeFullRaster: boolean;
-  filename: string;
 };
 
 function alignMap(a: TextNode["textAlignHorizontal"]): ExportText["align"] {
@@ -1067,56 +1059,6 @@ async function exportOneFrame(
   };
 }
 
-function startRemoteExportSession(
-  frames: FrameNode[],
-  exportScale: number,
-  includeFullRaster: boolean,
-  filename: string,
-  quality: string
-) {
-  remoteExportSession = {
-    frames,
-    exportScale,
-    includeFullRaster,
-    filename
-  };
-
-  safeUiPostMessage({
-    type: "REMOTE_EXPORT_BEGIN",
-    filename,
-    total: frames.length,
-    quality
-  });
-}
-
-async function sendRemoteExportSlide(index: number) {
-  const session = remoteExportSession;
-  if (!session) throw new Error("Remote export session is not initialized.");
-  if (index < 0 || index >= session.frames.length) return;
-
-  throwIfCancelled();
-  const slide = await exportOneFrame(
-    session.frames[index],
-    index + 1,
-    session.frames.length,
-    session.exportScale,
-    session.includeFullRaster
-  );
-
-  safeUiPostMessage({
-    type: "REMOTE_EXPORT_SLIDE",
-    filename: session.filename,
-    index,
-    total: session.frames.length,
-    isLast: index === session.frames.length - 1,
-    slide
-  });
-}
-
-function endRemoteExportSession() {
-  remoteExportSession = null;
-}
-
 async function exportFramesLocally(
   frames: FrameNode[],
   exportScale: number,
@@ -1143,6 +1085,84 @@ async function exportFramesLocally(
   postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
 }
 
+async function exportFramesRemotelyDirect(
+  frames: FrameNode[],
+  exportScale: number,
+  includeFullRaster: boolean,
+  filename: string
+) {
+  postStatus("Using Railway backend for PPTX export…");
+  postProgress("remote", 0, frames.length, "Creating server job…", "Connecting to Railway…");
+
+  const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
+    method: "POST",
+    body: JSON.stringify({ filename, expectedSlides: frames.length })
+  });
+
+  const { jobId } = created;
+
+  for (let i = 0; i < frames.length; i++) {
+    throwIfCancelled();
+
+    const slide = await exportOneFrame(
+      frames[i],
+      i + 1,
+      frames.length,
+      exportScale,
+      includeFullRaster
+    );
+
+    throwIfCancelled();
+    postStatus(`Mode: Railway backend. Uploading slide ${i + 1}/${frames.length}…`);
+    postProgress("upload", i, frames.length, `Uploading slide ${i + 1}/${frames.length}`, slide.name);
+
+    await fetchJson(`${REMOTE_API_BASE}/api/jobs/${jobId}/slides/${i}`, {
+      method: "PUT",
+      body: JSON.stringify(slide)
+    });
+
+    postProgress("upload", i + 1, frames.length, `Uploaded ${i + 1}/${frames.length}`, slide.name);
+  }
+
+  throwIfCancelled();
+  postStatus("Mode: Railway backend. Starting server build…");
+  postProgress("remote", frames.length, frames.length, "Starting server build…", "Building PPTX on Railway…");
+
+  await fetchJson(`${REMOTE_API_BASE}/api/jobs/${jobId}/finalize`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+
+  for (let attempt = 0; attempt < 240; attempt++) {
+    throwIfCancelled();
+
+    const status = await fetchJson<{ status: string; error?: string | null; downloadUrl?: string | null }>(
+      `${REMOTE_API_BASE}/api/jobs/${jobId}/status`
+    );
+
+    if (status.status === "completed" && status.downloadUrl) {
+      postStatus("Mode: Railway backend. Downloading PPTX…");
+      postProgress("done", 1, 1, "Done", "Server export complete ✅");
+      safeUiPostMessage({
+        type: "REMOTE_EXPORT_READY",
+        filename,
+        downloadUrl: status.downloadUrl
+      });
+      return;
+    }
+
+    if (status.status === "failed") {
+      throw new Error(status.error || "Railway export failed.");
+    }
+
+    postStatus(`Mode: Railway backend. Server status: ${status.status}`);
+    postProgress("remote", frames.length, frames.length, "Building on Railway…", `Server status: ${status.status}`);
+    await sleep(1500);
+  }
+
+  throw new Error("Remote export timed out while waiting for the server.");
+}
+
 // --- Messages ---
 figma.ui.onmessage = async (msg) => {
   try {
@@ -1150,18 +1170,7 @@ figma.ui.onmessage = async (msg) => {
 
     if (msg.type === "CANCEL_EXPORT") {
       cancelRequested = true;
-      endRemoteExportSession();
       postStatus("Cancel requested…");
-      return;
-    }
-
-    if (msg.type === "REMOTE_EXPORT_REQUEST_SLIDE") {
-      await sendRemoteExportSlide(Number(msg.index || 0));
-      return;
-    }
-
-    if (msg.type === "REMOTE_EXPORT_SESSION_DONE") {
-      endRemoteExportSession();
       return;
     }
 
@@ -1187,8 +1196,7 @@ figma.ui.onmessage = async (msg) => {
       postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
 
       if (useRemotePptx) {
-        postStatus("Using Railway backend for PPTX export…");
-        startRemoteExportSession(frames, exportScale, includeFullRaster, filename, quality);
+        await exportFramesRemotelyDirect(frames, exportScale, includeFullRaster, filename);
         return;
       }
 
