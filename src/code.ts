@@ -1298,6 +1298,29 @@ async function exportOneFrameRemoteSafe(
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
+  const crashSafeRasterOnly = total >= 4 || frame.children.length >= 24;
+  if (crashSafeRasterOnly) {
+    throwIfCancelled();
+    postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, "Safe frame render");
+    const safeScale = total >= 30 ? Math.min(exportScale, 0.75) :
+      total >= 10 ? Math.min(exportScale, 0.9) :
+      Math.min(exportScale, 1);
+    const bg = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: safeScale } });
+    throwIfCancelled();
+    postProgress("export", idx, total, `Ready: ${frame.name}`);
+    return {
+      name: frame.name,
+      width: frame.width,
+      height: frame.height,
+      scale: safeScale,
+      bgPngBytes: [],
+      bgPngBase64: pngToBase64(bg),
+      bgShape: null,
+      fullPngBytes: null,
+      items: []
+    };
+  }
+
   const items: ExportItem[] = [];
   const flattenForStability = total >= 10 || frame.children.length >= 24;
   const ultraStableMode = total > 5;
