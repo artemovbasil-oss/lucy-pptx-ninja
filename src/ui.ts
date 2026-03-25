@@ -5,7 +5,8 @@ declare const __LUCY_API_BASE_URL__: string;
 // Keep these in sync with your release notes
 const UI_VERSION = "v0.8";
 const UI_HIGHLIGHT = "large decks support";
-const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
+const DEFAULT_REMOTE_API_BASE = "https://lucy-pptx-ninja-production.up.railway.app";
+const REMOTE_API_BASE = ((typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim() || DEFAULT_REMOTE_API_BASE).replace(/\/$/, "");
 
 const exportBtn = document.getElementById("export") as HTMLButtonElement;
 const cancelBtn = document.getElementById("cancel") as HTMLButtonElement | null;

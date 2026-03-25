@@ -20,7 +20,8 @@ function postProgress(phase: string, current: number, total: number, label?: str
 function postCancelled() { safeUiPostMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
-const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
+const DEFAULT_REMOTE_API_BASE = "https://lucy-pptx-ninja-production.up.railway.app";
+const REMOTE_API_BASE = ((typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim() || DEFAULT_REMOTE_API_BASE).replace(/\/$/, "");
 
 function throwIfCancelled() {
   if (cancelRequested) {
