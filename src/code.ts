@@ -21,7 +21,13 @@ function postCancelled() { safeUiPostMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
 const DEFAULT_REMOTE_API_BASE = "https://lucy-pptx-ninja-production.up.railway.app";
-const REMOTE_API_BASE = ((typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim() || DEFAULT_REMOTE_API_BASE).replace(/\/$/, "");
+const INJECTED_REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
+const REMOTE_API_CANDIDATES = Array.from(new Set([INJECTED_REMOTE_API_BASE, DEFAULT_REMOTE_API_BASE].filter(Boolean)));
+let activeRemoteApiBase = REMOTE_API_CANDIDATES[0] || "";
+let exportInProgress = false;
+const thumbCache = new Map<string, { width: number; height: number; thumbBytes: number[] | null }>();
+let selectionRefreshInFlight = false;
+let selectionRefreshQueued = false;
 
 function throwIfCancelled() {
   if (cancelRequested) {
@@ -32,7 +38,7 @@ function throwIfCancelled() {
 }
 
 function shouldUseRemotePptx(format: string): boolean {
-  return format === "pptx" && !!REMOTE_API_BASE;
+  return format === "pptx" && REMOTE_API_CANDIDATES.length > 0;
 }
 
 function getExportScale(format: string, quality: string, remotePptx: boolean): number {
@@ -61,6 +67,23 @@ async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchRemoteJson<T = any>(path: string, init?: RequestInit): Promise<T> {
+  const orderedBases = [activeRemoteApiBase, ...REMOTE_API_CANDIDATES.filter((b) => b !== activeRemoteApiBase)];
+  let lastErr: unknown = null;
+
+  for (const base of orderedBases) {
+    try {
+      const data = await fetchJson<T>(`${base}${path}`, init);
+      activeRemoteApiBase = base;
+      return data;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error("Remote API unavailable");
 }
 
 function collectFramesDeep(node: SceneNode, out: FrameNode[]) {
@@ -122,22 +145,49 @@ function getSelectedFrames(): FrameNode[] {
 }
 async function sendSelectionFrames() {
   const frames = getSelectedFrames();
-  const enriched = frames.map((f) => ({
-    id: f.id,
-    name: f.name,
-    width: f.width,
-    height: f.height,
-    thumbBytes: null
-  }));
+  const enriched: Array<{ id: string; name: string; width: number; height: number; thumbBytes: number[] | null }> = [];
+  for (const f of frames) {
+    let thumbBytes: number[] | null = null;
+    const cached = thumbCache.get(f.id);
+    if (cached && cached.width === f.width && cached.height === f.height) {
+      thumbBytes = cached.thumbBytes;
+    } else if (!exportInProgress) {
+      try {
+        const bytes = await f.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 96 } });
+        thumbBytes = Array.from(bytes);
+      } catch {
+        thumbBytes = null;
+      }
+      thumbCache.set(f.id, { width: f.width, height: f.height, thumbBytes });
+    }
+    enriched.push({ id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes });
+  }
   safeUiPostMessage({
     type: "SELECTION_FRAMES",
     frames: enriched
   });
 }
 
+async function refreshSelectionFramesSafely() {
+  if (selectionRefreshInFlight) {
+    selectionRefreshQueued = true;
+    return;
+  }
+  selectionRefreshInFlight = true;
+  try {
+    await sendSelectionFrames();
+  } finally {
+    selectionRefreshInFlight = false;
+    if (selectionRefreshQueued) {
+      selectionRefreshQueued = false;
+      void refreshSelectionFramesSafely();
+    }
+  }
+}
+
 // Auto-update selection without manual refresh
 figma.on("selectionchange", () => {
-  try { void sendSelectionFrames(); } catch { /* ignore */ }
+  try { void refreshSelectionFramesSafely(); } catch { /* ignore */ }
 });
 
 function clamp(n: number, a: number, b: number) { return Math.max(a, Math.min(b, n)); }
@@ -1534,10 +1584,10 @@ async function exportFramesRemotelyDirect(
     frames.length >= 20 ? Math.min(exportScale, 1.35) :
     exportScale;
 
-  postStatus("Using Railway backend for PPTX export…");
+  postStatus(`Using Railway backend for PPTX export… (${activeRemoteApiBase})`);
   postProgress("remote", 0, frames.length, "Creating server job…", "Connecting to Railway…");
 
-  const created = await fetchJson<{ jobId: string }>(`${REMOTE_API_BASE}/api/jobs`, {
+  const created = await fetchRemoteJson<{ jobId: string }>(`/api/jobs`, {
     method: "POST",
     body: JSON.stringify({ filename, expectedSlides: frames.length })
   });
@@ -1558,7 +1608,7 @@ async function exportFramesRemotelyDirect(
     postStatus(`Mode: Railway backend. Uploading slide ${i + 1}/${frames.length}…`);
     postProgress("upload", i, frames.length, `Uploading slide ${i + 1}/${frames.length}`, slide.name);
 
-    await fetchJson(`${REMOTE_API_BASE}/api/jobs/${jobId}/slides/${i}`, {
+    await fetchRemoteJson(`/api/jobs/${jobId}/slides/${i}`, {
       method: "PUT",
       body: JSON.stringify(slide)
     });
@@ -1570,7 +1620,7 @@ async function exportFramesRemotelyDirect(
   postStatus("Mode: Railway backend. Starting server build…");
   postProgress("remote", frames.length, frames.length, "Starting server build…", "Building PPTX on Railway…");
 
-  await fetchJson(`${REMOTE_API_BASE}/api/jobs/${jobId}/finalize`, {
+  await fetchRemoteJson(`/api/jobs/${jobId}/finalize`, {
     method: "POST",
     body: JSON.stringify({})
   });
@@ -1578,8 +1628,8 @@ async function exportFramesRemotelyDirect(
   for (let attempt = 0; attempt < 240; attempt++) {
     throwIfCancelled();
 
-    const status = await fetchJson<{ status: string; error?: string | null; downloadUrl?: string | null }>(
-      `${REMOTE_API_BASE}/api/jobs/${jobId}/status`
+    const status = await fetchRemoteJson<{ status: string; error?: string | null; downloadUrl?: string | null }>(
+      `/api/jobs/${jobId}/status`
     );
 
     if (status.status === "completed" && status.downloadUrl) {
@@ -1608,7 +1658,7 @@ async function exportFramesRemotelyDirect(
 // --- Messages ---
 figma.ui.onmessage = async (msg) => {
   try {
-    if (msg.type === "REQUEST_SELECTION") { sendSelectionFrames(); return; }
+    if (msg.type === "REQUEST_SELECTION") { await refreshSelectionFramesSafely(); return; }
 
     if (msg.type === "CANCEL_EXPORT") {
       cancelRequested = true;
@@ -1618,32 +1668,37 @@ figma.ui.onmessage = async (msg) => {
 
     if (msg.type === "EXPORT_PPTX_ORDERED") {
       cancelRequested = false;
+      exportInProgress = true;
+      try {
 
-      const ids: string[] = Array.isArray(msg.frameIds) ? msg.frameIds : [];
-      if (!ids.length) { postError("No frames in export list."); return; }
+        const ids: string[] = Array.isArray(msg.frameIds) ? msg.frameIds : [];
+        if (!ids.length) { postError("No frames in export list."); return; }
 
-      const quality = String(msg.quality || "best");
-      const format = String(msg.format || "pptx");
-      const useRemotePptx = shouldUseRemotePptx(format);
-      const exportScale = getExportScale(format, quality, useRemotePptx);
-      const includeFullRaster = format === "pdf";
+        const quality = String(msg.quality || "best");
+        const format = String(msg.format || "pptx");
+        const useRemotePptx = shouldUseRemotePptx(format);
+        const exportScale = getExportScale(format, quality, useRemotePptx);
+        const includeFullRaster = format === "pdf";
 
-      const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
-      const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
+        const nodes = await Promise.all(ids.map((id) => figma.getNodeByIdAsync(id)));
+        const frames: FrameNode[] = nodes.filter((n): n is FrameNode => !!n && (n as any).type === "FRAME");
 
-      if (!frames.length) { postError("Selected frames not found. Click Refresh and try again."); return; }
+        if (!frames.length) { postError("Selected frames not found. Click Refresh and try again."); return; }
 
-      const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
+        const filename = frames.length === 1 ? `${frames[0].name}.pptx` : `Lucy_batch_${frames.length}_slides.pptx`;
 
-      postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
+        postProgress("export", 0, frames.length, "Starting export…", `Exporting ${frames.length} frame(s)…`);
 
-      if (useRemotePptx) {
-        await exportFramesRemotelyDirect(frames, exportScale, includeFullRaster, filename);
+        if (useRemotePptx) {
+          await exportFramesRemotelyDirect(frames, exportScale, includeFullRaster, filename);
+          return;
+        }
+
+        await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
         return;
+      } finally {
+        exportInProgress = false;
       }
-
-      await exportFramesLocally(frames, exportScale, includeFullRaster, filename, format, quality);
-      return;
     }
   } catch (e: any) {
     if (e?.__cancelled || e?.message === "CANCELLED") { postCancelled(); return; }
