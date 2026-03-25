@@ -12,6 +12,7 @@ function postCancelled() { figma.ui.postMessage({ type: "CANCELLED" }); }
 
 let cancelRequested = false;
 const REMOTE_API_BASE = (typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim().replace(/\/$/, "");
+let remoteExportSession: RemoteExportSession | null = null;
 
 function throwIfCancelled() {
   if (cancelRequested) {
@@ -172,6 +173,13 @@ type ExportSlide = {
   bgPngBytes: number[]; bgShape?: { fill: string; opacity: number } | null;
   fullPngBytes?: number[] | null;
   items: ExportItem[];
+};
+
+type RemoteExportSession = {
+  frames: FrameNode[];
+  exportScale: number;
+  includeFullRaster: boolean;
+  filename: string;
 };
 
 function alignMap(a: TextNode["textAlignHorizontal"]): ExportText["align"] {
@@ -1034,38 +1042,54 @@ async function exportOneFrame(
   };
 }
 
-async function streamFramesToRemoteBuilder(
+function startRemoteExportSession(
   frames: FrameNode[],
   exportScale: number,
   includeFullRaster: boolean,
   filename: string,
   quality: string
 ) {
+  remoteExportSession = {
+    frames,
+    exportScale,
+    includeFullRaster,
+    filename
+  };
+
   figma.ui.postMessage({
     type: "REMOTE_EXPORT_BEGIN",
     filename,
     total: frames.length,
     quality
   });
+}
 
-  for (let i = 0; i < frames.length; i++) {
-    throwIfCancelled();
-    const slide = await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster);
-    figma.ui.postMessage({
-      type: "REMOTE_EXPORT_SLIDE",
-      filename,
-      index: i,
-      total: frames.length,
-      slide
-    });
-  }
+async function sendRemoteExportSlide(index: number) {
+  const session = remoteExportSession;
+  if (!session) throw new Error("Remote export session is not initialized.");
+  if (index < 0 || index >= session.frames.length) return;
 
   throwIfCancelled();
+  const slide = await exportOneFrame(
+    session.frames[index],
+    index + 1,
+    session.frames.length,
+    session.exportScale,
+    session.includeFullRaster
+  );
+
   figma.ui.postMessage({
-    type: "REMOTE_EXPORT_FINISH",
-    filename,
-    total: frames.length
+    type: "REMOTE_EXPORT_SLIDE",
+    filename: session.filename,
+    index,
+    total: session.frames.length,
+    isLast: index === session.frames.length - 1,
+    slide
   });
+}
+
+function endRemoteExportSession() {
+  remoteExportSession = null;
 }
 
 async function exportFramesLocally(
@@ -1101,7 +1125,18 @@ figma.ui.onmessage = async (msg) => {
 
     if (msg.type === "CANCEL_EXPORT") {
       cancelRequested = true;
+      endRemoteExportSession();
       postStatus("Cancel requested…");
+      return;
+    }
+
+    if (msg.type === "REMOTE_EXPORT_REQUEST_SLIDE") {
+      await sendRemoteExportSlide(Number(msg.index || 0));
+      return;
+    }
+
+    if (msg.type === "REMOTE_EXPORT_SESSION_DONE") {
+      endRemoteExportSession();
       return;
     }
 
@@ -1128,7 +1163,7 @@ figma.ui.onmessage = async (msg) => {
 
       if (useRemotePptx) {
         postStatus("Using Railway backend for PPTX export…");
-        await streamFramesToRemoteBuilder(frames, exportScale, includeFullRaster, filename, quality);
+        startRemoteExportSession(frames, exportScale, includeFullRaster, filename, quality);
         return;
       }
 

@@ -230,7 +230,6 @@ function setBusy(next: boolean, ctaLabel?: string) {
 type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
 let currentFrames: FrameInfo[] = [];
 let remoteExportState: { jobId: string; filename: string; total: number; uploaded: number } | null = null;
-let remoteExportQueue: Promise<void> = Promise.resolve();
 let draggedFrameId: string | null = null;
 
 function getOrderedFrameIdsFromDOM(): string[] {
@@ -956,6 +955,7 @@ async function beginRemoteExport(filename: string, total: number) {
     total,
     uploaded: 0
   };
+  requestRemoteSlide(0);
 }
 
 async function uploadRemoteSlide(index: number, total: number, slide: ExportSlide) {
@@ -973,6 +973,10 @@ async function uploadRemoteSlide(index: number, total: number, slide: ExportSlid
 
   remoteExportState.uploaded = index + 1;
   setProgress("upload", index + 1, total, `Uploaded ${index + 1}/${total}`, slide.name);
+
+  if (index + 1 < total) {
+    requestRemoteSlide(index + 1);
+  }
 }
 
 async function finalizeRemoteExport() {
@@ -1000,12 +1004,14 @@ async function finalizeRemoteExport() {
       setStatus("Mode: Railway backend. Downloading PPTX…");
       setProgress("done", 1, 1, "Done", "Server export complete ✅");
       setState("success");
-      triggerDownload(status.downloadUrl, filename);
+      await triggerDownload(status.downloadUrl, filename);
+      closeRemoteExportSession();
       remoteExportState = null;
       return;
     }
 
     if (status.status === "failed") {
+      closeRemoteExportSession();
       remoteExportState = null;
       throw new Error(status.error || "Railway export failed.");
     }
@@ -1015,13 +1021,17 @@ async function finalizeRemoteExport() {
     await sleep(1500);
   }
 
+  closeRemoteExportSession();
   remoteExportState = null;
   throw new Error("Remote export timed out while waiting for the server.");
 }
 
-async function runRemoteStep(task: () => Promise<void>) {
-  remoteExportQueue = remoteExportQueue.then(task, task);
-  await remoteExportQueue;
+function requestRemoteSlide(index: number) {
+  parent.postMessage({ pluginMessage: { type: "REMOTE_EXPORT_REQUEST_SLIDE", index } }, "*");
+}
+
+function closeRemoteExportSession() {
+  parent.postMessage({ pluginMessage: { type: "REMOTE_EXPORT_SESSION_DONE" } }, "*");
 }
 
 window.onmessage = async (event) => {
@@ -1061,33 +1071,25 @@ window.onmessage = async (event) => {
   }
 
   if (msg.type === "REMOTE_EXPORT_BEGIN") {
-    await runRemoteStep(async () => {
-      try {
-        await beginRemoteExport(msg.filename ?? "Lucy_batch.pptx", msg.total || 1);
-      } catch (err) {
-        remoteExportState = null;
-        throw err;
-      }
-    });
+    try {
+      await beginRemoteExport(msg.filename ?? "Lucy_batch.pptx", msg.total || 1);
+    } catch (err) {
+      remoteExportState = null;
+      throw err;
+    }
     return;
   }
 
   if (msg.type === "REMOTE_EXPORT_SLIDE") {
-    await runRemoteStep(async () => {
-      await uploadRemoteSlide(msg.index || 0, msg.total || 1, msg.slide);
-    });
-    return;
-  }
-
-  if (msg.type === "REMOTE_EXPORT_FINISH") {
-    await runRemoteStep(async () => {
+    await uploadRemoteSlide(msg.index || 0, msg.total || 1, msg.slide);
+    if (msg.isLast) {
       try {
         await finalizeRemoteExport();
       } finally {
         setBusy(false, "Export PPTX");
         uiCancelRequested = false;
       }
-    });
+    }
     return;
   }
 
