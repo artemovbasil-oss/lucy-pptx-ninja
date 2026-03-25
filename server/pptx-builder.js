@@ -60,6 +60,18 @@ function toDataUrl(bytes, mimeType) {
   return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
 }
 
+function pngDataUrlFromItem(item, keyBase) {
+  const base64Key = `${keyBase}Base64`;
+  const bytesKey = `${keyBase}Bytes`;
+  if (typeof item?.[base64Key] === "string" && item[base64Key].length > 0) {
+    return `data:image/png;base64,${item[base64Key]}`;
+  }
+  if (Array.isArray(item?.[bytesKey]) && item[bytesKey].length > 0) {
+    return toDataUrl(item[bytesKey], "image/png");
+  }
+  return null;
+}
+
 async function buildPptxBuffer(slides) {
   const targetWpx = Math.max(...slides.map((s) => s.width));
   const targetHpx = Math.max(...slides.map((s) => s.height));
@@ -71,12 +83,13 @@ async function buildPptxBuffer(slides) {
   for (const sd of slides) {
     const trf = buildTransformForSlide(targetWpx, targetHpx, sd.width, sd.height);
     const slide = pptx.addSlide();
-    const hasBgPng = Array.isArray(sd.bgPngBytes) && sd.bgPngBytes.length > 0;
+    const bgDataUrl = pngDataUrlFromItem(sd, "bgPng");
+    const hasBgPng = !!bgDataUrl;
     const hasBgShape = !!sd.bgShape && !!sd.bgShape.fill;
 
     if (hasBgPng) {
       slide.addImage({
-        data: toDataUrl(sd.bgPngBytes, "image/png"),
+        data: bgDataUrl,
         x: pxToIn(trf.ox),
         y: pxToIn(trf.oy),
         w: pxToIn(trf.outW),
@@ -103,8 +116,10 @@ async function buildPptxBuffer(slides) {
       const sh = (v) => v * trf.s;
 
       if (it.kind === "raster") {
+        const rasterDataUrl = pngDataUrlFromItem(it, "png");
+        if (!rasterDataUrl) continue;
         slide.addImage({
-          data: toDataUrl(it.pngBytes, "image/png"),
+          data: rasterDataUrl,
           x: pxToIn(sx(it.x)),
           y: pxToIn(sy(it.y)),
           w: pxToIn(sw(it.w)),
@@ -114,8 +129,10 @@ async function buildPptxBuffer(slides) {
       }
 
       if (it.kind === "maskedImage") {
+        const maskedDataUrl = pngDataUrlFromItem(it, "png");
+        if (!maskedDataUrl) continue;
         slide.addImage({
-          data: toDataUrl(it.pngBytes, "image/png"),
+          data: maskedDataUrl,
           x: pxToIn(sx(it.x)),
           y: pxToIn(sy(it.y)),
           w: pxToIn(sw(it.w)),
@@ -194,22 +211,54 @@ async function buildPptxBuffer(slides) {
         const lineSpacingPt = lhPx ? Math.max(1, Math.round(pxToPt(lhPx))) : undefined;
         const rawText = String(it.text);
         const finalText = it.uppercase ? rawText.toUpperCase() : rawText;
-
-        slide.addText(finalText, {
+        const baseTextOpts = {
           x: pxToIn(xPx),
           y: pxToIn(yPx),
           w: pxToIn(wPx),
           h: pxToIn(hPx),
           margin: 0,
+          align: it.align || "left",
+          valign: "top",
           inset: 0,
+          transparency: tPct
+        };
+
+        if (Array.isArray(it.runs) && it.runs.length > 0) {
+          const richRuns = it.runs
+            .map((r) => {
+              const runTextRaw = String(r.text || "");
+              if (!runTextRaw.length) return null;
+              const runText = r.uppercase ? runTextRaw.toUpperCase() : runTextRaw;
+              const runFsPx = Number(r.fontSize || it.fontSize || 14) * trf.s;
+              const runLhPx = typeof r.lineHeightPx === "number" ? r.lineHeightPx * trf.s : null;
+              const runLineSpacingPt = runLhPx ? Math.max(1, Math.round(pxToPt(runLhPx))) : undefined;
+              return {
+                text: runText,
+                options: {
+                  fontFace: mapFontFamily(r.fontFamily || it.fontFamily),
+                  fontSize: Math.max(1, Math.round(pxToPt(runFsPx))),
+                  bold: !!r.bold,
+                  italic: !!r.italic,
+                  color: r.color || it.color || "000000",
+                  ...(runLineSpacingPt ? { lineSpacing: runLineSpacingPt } : {})
+                }
+              };
+            })
+            .filter(Boolean);
+
+          if (richRuns.length > 0) {
+            slide.addText(richRuns, baseTextOpts);
+            continue;
+          }
+        }
+
+        slide.addText(finalText, {
+          ...baseTextOpts,
           fontFace: mapFontFamily(it.fontFamily),
           fontSize: Math.max(1, Math.round(pxToPt(effFsPx))),
           bold: !!it.bold,
           italic: !!it.italic,
           color: it.color || "000000",
-          align: it.align || "left",
-          valign: "top",
-          transparency: tPct,
           ...(lineSpacingPt ? { lineSpacing: lineSpacingPt } : {})
         });
       }

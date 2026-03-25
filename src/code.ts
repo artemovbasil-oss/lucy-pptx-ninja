@@ -171,6 +171,18 @@ type ExportText = {
   lineHeightPx?: number | null; color: string;
   align: "left" | "center" | "right" | "justify";
   opacity: number; bold: boolean; italic: boolean; uppercase: boolean;
+  runs?: ExportTextRun[];
+};
+
+type ExportTextRun = {
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  lineHeightPx?: number | null;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  uppercase: boolean;
 };
 
 type ExportShape =
@@ -183,21 +195,32 @@ type ExportShape =
       stroke: { color: string; width: number }; opacity: number; };
 
 type ExportRaster = { kind: "raster"; z: number; id: string; x: number; y: number; w: number; h: number; pngBytes: number[]; };
+type ExportRasterRemote = { kind: "raster"; z: number; id: string; x: number; y: number; w: number; h: number; pngBase64: string; };
 
 type ExportMaskedImage = {
   kind: "maskedImage"; z: number; id: string;
   x: number; y: number; w: number; h: number;
   pngBytes: number[]; crop: { x: number; y: number; w: number; h: number };
 };
+type ExportMaskedImageRemote = {
+  kind: "maskedImage"; z: number; id: string;
+  x: number; y: number; w: number; h: number;
+  pngBase64: string; crop: { x: number; y: number; w: number; h: number };
+};
 
-type ExportItem = ExportText | ExportShape | ExportRaster | ExportMaskedImage;
+type ExportItem = ExportText | ExportShape | ExportRaster | ExportMaskedImage | ExportRasterRemote | ExportMaskedImageRemote;
 
 type ExportSlide = {
   name: string; width: number; height: number; scale: number;
   bgPngBytes: number[]; bgShape?: { fill: string; opacity: number } | null;
+  bgPngBase64?: string | null;
   fullPngBytes?: number[] | null;
   items: ExportItem[];
 };
+
+function pngToBase64(bytes: Uint8Array): string {
+  return figma.base64Encode(bytes);
+}
 
 function alignMap(a: TextNode["textAlignHorizontal"]): ExportText["align"] {
   if (a === "CENTER") return "center";
@@ -260,14 +283,17 @@ function getIsUppercase(tn: TextNode): boolean {
     return tc === "UPPER";
   }
 }
+function lineHeightToPx(lineHeight: LineHeight | PluginAPI["mixed"] | null | undefined, fontSizePx: number): number | null {
+  if (!lineHeight || lineHeight === figma.mixed) return null;
+  if (lineHeight.unit === "AUTO") return null;
+  if (lineHeight.unit === "PIXELS") return typeof lineHeight.value === "number" ? lineHeight.value : null;
+  if (lineHeight.unit === "PERCENT") return typeof lineHeight.value === "number" ? (fontSizePx * lineHeight.value) / 100 : null;
+  return null;
+}
+
 function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   try {
-    const lh = tn.lineHeight;
-    if (!lh || lh === figma.mixed) return null;
-    if (lh.unit === "AUTO") return null;
-    if (lh.unit === "PIXELS") return typeof lh.value === "number" ? lh.value : null;
-    if (lh.unit === "PERCENT") return typeof lh.value === "number" ? (fontSizePx * lh.value) / 100 : null;
-    return null;
+    return lineHeightToPx(tn.lineHeight, fontSizePx);
   } catch { return null; }
 }
 
@@ -284,12 +310,52 @@ function getDirectSolidFillHex(tn: TextNode): string | null {
 
 function getDirectTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   try {
-    const lh = tn.lineHeight;
-    if (!lh || lh === figma.mixed) return null;
-    if (lh.unit === "AUTO") return null;
-    if (lh.unit === "PIXELS") return typeof lh.value === "number" ? lh.value : null;
-    if (lh.unit === "PERCENT") return typeof lh.value === "number" ? (fontSizePx * lh.value) / 100 : null;
+    return lineHeightToPx(tn.lineHeight, fontSizePx);
+  } catch {
     return null;
+  }
+}
+
+function getSolidFillHexFromPaints(paints: readonly Paint[] | PluginAPI["mixed"] | null | undefined): string | null {
+  if (!paints || paints === figma.mixed) return null;
+  const solid = paints.find((p) => p.type === "SOLID") as SolidPaint | undefined;
+  return solid ? rgbToHex(solid.color) : null;
+}
+
+function getDirectTextRunsPayload(tn: TextNode): ExportTextRun[] | null {
+  try {
+    const segments = (tn as any).getStyledTextSegments?.(["fontName", "fontSize", "fills", "textCase", "lineHeight"]) as any[] | undefined;
+    if (!segments || segments.length <= 1) return null;
+
+    const runs: ExportTextRun[] = [];
+    for (const seg of segments) {
+      const segText = String(seg?.characters ?? "");
+      if (!segText.length) continue;
+
+      const fontName = seg?.fontName as FontName | PluginAPI["mixed"] | undefined;
+      const fontSize = seg?.fontSize as number | PluginAPI["mixed"] | undefined;
+      const textCase = seg?.textCase as TextCase | PluginAPI["mixed"] | undefined;
+      const color = getSolidFillHexFromPaints(seg?.fills as readonly Paint[] | PluginAPI["mixed"] | undefined);
+
+      if (!fontName || fontName === figma.mixed) return null;
+      if (typeof fontSize !== "number") return null;
+      if (!color) return null;
+
+      const style = (fontName.style || "").toLowerCase();
+      const uppercase = textCase === "UPPER";
+      runs.push({
+        text: uppercase ? segText.toUpperCase() : segText,
+        fontFamily: fontName.family || "Arial",
+        fontSize,
+        lineHeightPx: lineHeightToPx(seg?.lineHeight as LineHeight | PluginAPI["mixed"] | undefined, fontSize),
+        color,
+        bold: style.includes("bold") || style.includes("semibold") || style.includes("demibold") || style.includes("heavy") || style.includes("black"),
+        italic: style.includes("italic") || style.includes("oblique"),
+        uppercase
+      });
+    }
+
+    return runs.length > 1 ? runs : null;
   } catch {
     return null;
   }
@@ -300,31 +366,48 @@ function getDirectTextPayload(tn: TextNode): Omit<ExportText, "kind" | "z" | "id
     const text = tn.characters ?? "";
     if (!text.length) return null;
 
+    const align = tn.textAlignHorizontal;
+    if (!align || align === figma.mixed) return null;
+
     const fontName = tn.fontName;
     const fontSize = tn.fontSize;
     const textCase = tn.textCase;
-    const align = tn.textAlignHorizontal;
+    const opacity = typeof tn.opacity === "number" ? tn.opacity : 1;
 
-    if (!fontName || fontName === figma.mixed) return null;
-    if (typeof fontSize !== "number") return null;
-    if (!align || align === figma.mixed) return null;
-    if (textCase === figma.mixed) return null;
+    if (fontName && fontName !== figma.mixed && typeof fontSize === "number" && textCase !== figma.mixed) {
+      const color = getDirectSolidFillHex(tn);
+      if (!color) return null;
 
-    const color = getDirectSolidFillHex(tn);
-    if (!color) return null;
+      const style = (fontName.style || "").toLowerCase();
+      return {
+        text,
+        fontFamily: fontName.family || "Arial",
+        fontSize,
+        lineHeightPx: getDirectTextLineHeightPx(tn, fontSize),
+        color,
+        align: alignMap(align),
+        opacity,
+        bold: style.includes("bold") || style.includes("semibold") || style.includes("demibold") || style.includes("heavy") || style.includes("black"),
+        italic: style.includes("italic") || style.includes("oblique"),
+        uppercase: textCase === "UPPER"
+      };
+    }
 
-    const style = (fontName.style || "").toLowerCase();
+    const runs = getDirectTextRunsPayload(tn);
+    if (!runs || !runs.length) return null;
+    const first = runs[0];
     return {
       text,
-      fontFamily: fontName.family || "Arial",
-      fontSize,
-      lineHeightPx: getDirectTextLineHeightPx(tn, fontSize),
-      color,
+      fontFamily: first.fontFamily,
+      fontSize: first.fontSize,
+      lineHeightPx: first.lineHeightPx ?? null,
+      color: first.color,
       align: alignMap(align),
-      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
-      bold: style.includes("bold") || style.includes("semibold") || style.includes("demibold") || style.includes("heavy") || style.includes("black"),
-      italic: style.includes("italic") || style.includes("oblique"),
-      uppercase: textCase === "UPPER"
+      opacity,
+      bold: first.bold,
+      italic: first.italic,
+      uppercase: false,
+      runs
     };
   } catch {
     return null;
@@ -1190,6 +1273,7 @@ async function exportOneFrameRemoteSafe(
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
   const items: ExportItem[] = [];
+  const flattenForStability = total >= 10 || frame.children.length >= 24;
   let z = 0;
 
   function nextZ(nodeId: string) {
@@ -1197,20 +1281,91 @@ async function exportOneFrameRemoteSafe(
     return z;
   }
 
+  function collectTextDescendantsSafe(root: SceneNode): TextNode[] {
+    const out: TextNode[] = [];
+    const stack: SceneNode[] = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if ("visible" in n && (n as any).visible === false) continue;
+      if (n.type === "TEXT") out.push(n as TextNode);
+      if ("children" in n) {
+        for (const ch of n.children as readonly SceneNode[]) stack.push(ch as SceneNode);
+      }
+    }
+    return out;
+  }
+
   async function addRasterItemSafe(node: SceneNode, idPrefix?: string) {
     const r = rectRelativeToFrame(node, frame);
     if (r.w <= 0 || r.h <= 0) return;
+    const maxSide = Math.max(r.w, r.h);
+    const nodeScale = maxSide >= 4000 ? Math.min(exportScale, 0.85) :
+      maxSide >= 2500 ? Math.min(exportScale, 1) :
+      exportScale;
 
     postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, node.name);
-    const bytes = await rasterizeNodePNG(node, exportScale);
+    const bytes = await rasterizeNodePNG(node, nodeScale);
     const itemZ = nextZ(node.id);
     items.push({
       kind: "raster",
       z: itemZ,
       id: idPrefix ? `${idPrefix}__${node.id}` : node.id,
       x: r.x, y: r.y, w: r.w, h: r.h,
-      pngBytes: Array.from(bytes)
+      pngBase64: pngToBase64(bytes)
     });
+  }
+
+  if (flattenForStability) {
+    const textNodes = collectTextDescendantsSafe(frame);
+    const hideForBg: TextNode[] = [];
+    for (const tn of textNodes) {
+      throwIfCancelled();
+      const payload = getDirectTextPayload(tn);
+      if (!payload) continue;
+      const r = rectRelativeToFrame(tn, frame);
+      items.push({
+        kind: "text",
+        z: nextZ(tn.id),
+        id: tn.id,
+        x: r.x, y: r.y, w: r.w, h: r.h,
+        ...payload
+      });
+      hideForBg.push(tn);
+    }
+
+    const prevVisible = new Map<string, boolean>();
+    for (const tn of hideForBg) {
+      prevVisible.set(tn.id, tn.visible);
+      tn.visible = false;
+    }
+
+    let bgPngBase64: string | null = null;
+    try {
+      throwIfCancelled();
+      postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, "Background");
+      const bgScale = Math.min(exportScale, 1.15);
+      const bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: bgScale } });
+      bgPngBase64 = pngToBase64(bgPng);
+    } finally {
+      for (const tn of hideForBg) {
+        const v = prevVisible.get(tn.id);
+        if (typeof v === "boolean") tn.visible = v;
+      }
+    }
+
+    throwIfCancelled();
+    postProgress("export", idx, total, `Ready: ${frame.name}`);
+    return {
+      name: frame.name,
+      width: frame.width,
+      height: frame.height,
+      scale: exportScale,
+      bgPngBytes: [],
+      bgPngBase64,
+      bgShape: null,
+      fullPngBytes: null,
+      items
+    };
   }
 
   async function handleDirectChild(node: SceneNode) {
@@ -1312,6 +1467,7 @@ async function exportOneFrameRemoteSafe(
     height: frame.height,
     scale: exportScale,
     bgPngBytes: [],
+    bgPngBase64: null,
     bgShape,
     fullPngBytes: null,
     items
@@ -1324,6 +1480,11 @@ async function exportFramesRemotelyDirect(
   includeFullRaster: boolean,
   filename: string
 ) {
+  const adaptiveScale = frames.length >= 80 ? Math.min(exportScale, 1) :
+    frames.length >= 40 ? Math.min(exportScale, 1.15) :
+    frames.length >= 20 ? Math.min(exportScale, 1.35) :
+    exportScale;
+
   postStatus("Using Railway backend for PPTX export…");
   postProgress("remote", 0, frames.length, "Creating server job…", "Connecting to Railway…");
 
@@ -1341,7 +1502,7 @@ async function exportFramesRemotelyDirect(
       frames[i],
       i + 1,
       frames.length,
-      exportScale
+      adaptiveScale
     );
 
     throwIfCancelled();
