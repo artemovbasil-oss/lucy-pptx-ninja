@@ -357,6 +357,30 @@ function isSafeEditableLine(node: LineNode): boolean {
 function isContainer(node: SceneNode): boolean {
   return (node.type === "FRAME" || node.type === "GROUP" || node.type === "INSTANCE" || node.type === "COMPONENT" || node.type === "COMPONENT_SET");
 }
+
+function isComplexContainerForConservativeExport(node: SceneNode): boolean {
+  return node.type === "GROUP" || node.type === "INSTANCE" || node.type === "COMPONENT" || node.type === "COMPONENT_SET";
+}
+
+function countVisibleDescendants(node: SceneNode, limit = 48): number {
+  if (!("children" in node)) return 0;
+  const stack: SceneNode[] = [...(node.children as readonly SceneNode[])];
+  let count = 0;
+  while (stack.length) {
+    const n = stack.pop()!;
+    if ("visible" in n && (n as any).visible === false) continue;
+    count += 1;
+    if (count >= limit) return count;
+    if ("children" in n) stack.push(...(n.children as readonly SceneNode[]));
+  }
+  return count;
+}
+
+function shouldRasterizeConservativeContainer(node: SceneNode, frame: FrameNode): boolean {
+  if (!isComplexContainerForConservativeExport(node)) return false;
+  if (isNearFullFrame(node, frame)) return false;
+  return countVisibleDescendants(node, 28) >= 28 || node.width >= frame.width * 0.2 || node.height >= frame.height * 0.12;
+}
 function containsTextDescendant(node: SceneNode): boolean {
   if (!("children" in node)) return false;
   const arr: SceneNode[] = [];
@@ -569,7 +593,8 @@ async function exportOneFrame(
   idx: number,
   total: number,
   exportScale: number,
-  includeFullRaster: boolean
+  includeFullRaster: boolean,
+  conservative = false
 ): Promise<ExportSlide> {
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
@@ -738,6 +763,16 @@ async function exportOneFrame(
     }
 
     if (node.id !== frame.id) {
+      if (conservative && shouldRasterizeConservativeContainer(node, frame)) {
+        const r = rectRelativeToFrame(node, frame);
+        const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
+        if (!isOverflowing) {
+          rasterCandidates.push(node);
+          markHide(node);
+        }
+        return;
+      }
+
       if (consumedMaskIds.has(node.id) || consumedMaskedContentIds.has(node.id)) return;
 
       z += 1;
@@ -1070,7 +1105,7 @@ async function exportFramesLocally(
   const slides: ExportSlide[] = [];
   for (let i = 0; i < frames.length; i++) {
     throwIfCancelled();
-    slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster));
+    slides.push(await exportOneFrame(frames[i], i + 1, frames.length, exportScale, includeFullRaster, false));
   }
 
   throwIfCancelled();
@@ -1109,7 +1144,8 @@ async function exportFramesRemotelyDirect(
       i + 1,
       frames.length,
       exportScale,
-      includeFullRaster
+      includeFullRaster,
+      true
     );
 
     throwIfCancelled();
