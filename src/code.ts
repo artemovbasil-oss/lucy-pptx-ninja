@@ -1448,7 +1448,7 @@ async function exportOneFrameRemoteSafe(
   if (flattenForStability) {
     const nodes = collectVisibleDescendantsSafe(frame);
     const hideForBg: SceneNode[] = [];
-    const maxFlattenRasterItems = total >= 20 ? 24 : 48;
+    const maxFlattenRasterItems = total >= 20 ? 36 : 64;
     let flattenRasterItems = 0;
 
     function containsMaskNode(root: SceneNode): boolean {
@@ -1469,14 +1469,34 @@ async function exportOneFrameRemoteSafe(
 
     function isSafeStandaloneRasterNode(node: SceneNode): boolean {
       if (node.parent?.id !== frame.id) return false;
+      if (isNearFullFrame(node, frame)) return false;
       if (isMaskNode(node)) return false;
       if (containsMaskNode(node)) return false;
       if (hasRotation(node)) return false;
       if (hasAnyEffects(node)) return false;
       if (hasBlendMode(node)) return false;
       if (isContainer(node) && ("clipsContent" in node) && (node as FrameNode).clipsContent === true) return false;
-      // Most reliable separate-raster case: a plain rectangle with image fill.
-      if (node.type === "RECTANGLE" && hasImageFill(node)) return true;
+
+      // Separate simple, non-masked visual primitives as raster layers to preserve look.
+      if (node.type === "RECTANGLE") {
+        if (hasImageFill(node)) return true;
+        if (hasAnyGradientFill(node)) return true;
+        if (!hasOnlySolidFills(node)) return true;
+      }
+      if (node.type === "ELLIPSE") {
+        if (hasImageFill(node)) return true;
+        if (hasAnyGradientFill(node)) return true;
+        if (!hasOnlySolidFills(node)) return true;
+      }
+      if (
+        node.type === "VECTOR" ||
+        node.type === "BOOLEAN_OPERATION" ||
+        node.type === "STAR" ||
+        node.type === "POLYGON"
+      ) {
+        return true;
+      }
+
       return false;
     }
 
