@@ -172,7 +172,26 @@ function setState(state: UiState) {
   stateDotEl.classList.add(state);
 }
 
+let exportCurrent = 0;
+let exportTotal = 1;
+
+function applySlideProgressVisuals() {
+  const rows = Array.from(listEl.querySelectorAll(".item")) as HTMLDivElement[];
+  for (const row of rows) row.classList.remove("exportingActive", "exportingDone");
+  if (!isBusy || !rows.length) return;
+  if (exportTotal !== rows.length) return;
+
+  const currentIndex = Math.max(0, Math.min(rows.length, exportCurrent));
+  for (let i = 0; i < rows.length; i++) {
+    if (i < currentIndex) rows[i].classList.add("exportingDone");
+  }
+  if (currentIndex < rows.length) rows[currentIndex].classList.add("exportingActive");
+}
+
 function setProgress(phase: string, current: number, total: number, label?: string, text?: string) {
+  exportCurrent = current;
+  exportTotal = total;
+
   const t = Math.max(1, total);
   const c = clamp(current, 0, t);
   const p = Math.round((c / t) * 100);
@@ -181,6 +200,7 @@ function setProgress(phase: string, current: number, total: number, label?: stri
   if (pctEl) pctEl.textContent = "";
   if (progTextEl) progTextEl.textContent = label ? label : `${c}/${t}`;
   if (text) setStatus(text);
+  applySlideProgressVisuals();
 }
 
 let isBusy = false;
@@ -205,6 +225,12 @@ function setBusy(next: boolean, ctaLabel?: string) {
     if (next) footerEl.classList.add("showCancel");
     else footerEl.classList.remove("showCancel");
   }
+
+  if (!next) {
+    exportCurrent = 0;
+    exportTotal = 1;
+  }
+  applySlideProgressVisuals();
 }
 
 type FrameInfo = { id: string; name: string; width: number; height: number; thumbBytes?: number[] | null };
@@ -245,6 +271,7 @@ function renderList(frames: FrameInfo[]) {
   }
 
   exportBtn.disabled = isBusy ? true : false;
+  applySlideProgressVisuals();
 
   const createDropSlot = (targetIndex: number) => {
     const slot = document.createElement("div");

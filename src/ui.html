@@ -204,6 +204,15 @@
         box-shadow: 0 0 10px rgba(248,113,113,0.35);
       }
       .status { white-space: pre-line; margin-top: 8px; color: var(--muted); }
+      .statusInline {
+        margin: 8px 0 10px;
+        padding: 8px 10px;
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 10px;
+        background: rgba(255,255,255,0.02);
+      }
+      .statusInline .progline { margin-top: 6px; }
+      .statusInline .status { margin-top: 6px; font-size: 11px; }
 
       /* Slides list */
       .list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
@@ -243,9 +252,38 @@
         border-radius: var(--r2);
         background: rgba(255,255,255,0.02);
         transition: border-color .18s var(--ease), transform .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
+        position: relative;
+        overflow: hidden;
       }
       .item:hover { border-color: rgba(var(--accent-rgb), 0.35); box-shadow: 0 6px 20px rgba(0,0,0,0.28); transform: translateY(-1px); }
       .item:active { transform: translateY(0); }
+      .item.exportingDone {
+        border-color: rgba(110,231,183,0.35);
+        background: rgba(110,231,183,0.08);
+      }
+      .item.exportingActive {
+        border-color: rgba(var(--accent-rgb), 0.55);
+        background: rgba(var(--accent-rgb), 0.12);
+      }
+      .item.exportingActive::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          105deg,
+          rgba(var(--accent-rgb), 0) 0%,
+          rgba(var(--accent-rgb), 0.08) 35%,
+          rgba(var(--accent-rgb), 0.38) 50%,
+          rgba(var(--accent-rgb), 0.08) 65%,
+          rgba(var(--accent-rgb), 0) 100%
+        );
+        transform: translateX(-120%);
+        animation: slideWave 1.35s linear infinite;
+        pointer-events: none;
+      }
+      @keyframes slideWave {
+        to { transform: translateX(120%); }
+      }
 
       .handle {
         width: 18px; height: 18px; display:flex; align-items:center; justify-content:center;
@@ -356,16 +394,16 @@
           </div>
         </div>
 
-        <div id="list" class="list"></div>
-      </div>
-
-      <div class="card" id="statusCard">
-        <div class="progress"><div id="bar" class="bar"></div></div>
-        <div class="progline">
-          <div id="progText" class="muted">Idle</div>
-          <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+        <div id="statusInline" class="statusInline">
+          <div class="progress"><div id="bar" class="bar"></div></div>
+          <div class="progline">
+            <div id="progText" class="muted">Idle</div>
+            <div id="stateDot" class="stateDot idle" aria-hidden="true"></div>
+          </div>
+          <div id="status" class="status">Select one or more frames.</div>
         </div>
-        <div id="status" class="status">Select one or more frames.</div>
+
+        <div id="list" class="list"></div>
       </div>
 
       <div class="footer" id="footer">

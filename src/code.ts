@@ -1359,6 +1359,34 @@ async function exportFramesLocally(
   postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
 }
 
+async function exportOneFrameRemoteRasterOnly(
+  frame: FrameNode,
+  idx: number,
+  total: number,
+  exportScale: number,
+  label = "Safe frame render"
+): Promise<ExportSlide> {
+  throwIfCancelled();
+  postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, label);
+  const safeScale = total >= 30 ? Math.min(exportScale, 0.75) :
+    total >= 10 ? Math.min(exportScale, 0.9) :
+    Math.min(exportScale, 1);
+  const bg = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: safeScale } });
+  throwIfCancelled();
+  postProgress("export", idx, total, `Ready: ${frame.name}`);
+  return {
+    name: frame.name,
+    width: frame.width,
+    height: frame.height,
+    scale: safeScale,
+    bgPngBytes: [],
+    bgPngBase64: pngToBase64(bg),
+    bgShape: null,
+    fullPngBytes: null,
+    items: []
+  };
+}
+
 async function exportOneFrameRemoteSafe(
   frame: FrameNode,
   idx: number,
@@ -1368,32 +1396,14 @@ async function exportOneFrameRemoteSafe(
   throwIfCancelled();
   postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
 
-  const crashSafeRasterOnly = total >= 4 || frame.children.length >= 24;
+  const crashSafeRasterOnly = total >= 36 || frame.children.length >= 220;
   if (crashSafeRasterOnly) {
-    throwIfCancelled();
-    postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, "Safe frame render");
-    const safeScale = total >= 30 ? Math.min(exportScale, 0.75) :
-      total >= 10 ? Math.min(exportScale, 0.9) :
-      Math.min(exportScale, 1);
-    const bg = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: safeScale } });
-    throwIfCancelled();
-    postProgress("export", idx, total, `Ready: ${frame.name}`);
-    return {
-      name: frame.name,
-      width: frame.width,
-      height: frame.height,
-      scale: safeScale,
-      bgPngBytes: [],
-      bgPngBase64: pngToBase64(bg),
-      bgShape: null,
-      fullPngBytes: null,
-      items: []
-    };
+    return await exportOneFrameRemoteRasterOnly(frame, idx, total, exportScale, "Safe frame render");
   }
 
   const items: ExportItem[] = [];
-  const flattenForStability = total >= 10 || frame.children.length >= 24;
-  const ultraStableMode = total > 5;
+  const flattenForStability = total >= 8 || frame.children.length >= 48;
+  const ultraStableMode = total >= 16 || frame.children.length >= 90;
   let z = 0;
 
   function nextZ(nodeId: string) {
@@ -1401,13 +1411,13 @@ async function exportOneFrameRemoteSafe(
     return z;
   }
 
-  function collectTextDescendantsSafe(root: SceneNode): TextNode[] {
-    const out: TextNode[] = [];
+  function collectVisibleDescendantsSafe(root: SceneNode): SceneNode[] {
+    const out: SceneNode[] = [];
     const stack: SceneNode[] = [root];
     while (stack.length) {
       const n = stack.pop()!;
       if ("visible" in n && (n as any).visible === false) continue;
-      if (n.type === "TEXT") out.push(n as TextNode);
+      if (n.id !== root.id) out.push(n);
       if ("children" in n) {
         for (const ch of n.children as readonly SceneNode[]) stack.push(ch as SceneNode);
       }
@@ -1436,27 +1446,85 @@ async function exportOneFrameRemoteSafe(
   }
 
   if (flattenForStability) {
-    const textNodes = collectTextDescendantsSafe(frame);
-    const hideForBg: TextNode[] = [];
-    for (const tn of textNodes) {
+    const nodes = collectVisibleDescendantsSafe(frame);
+    const hideForBg: SceneNode[] = [];
+    for (const node of nodes) {
       throwIfCancelled();
-      const payload = ultraStableMode ? getUltraSafeTextPayload(tn) : getDirectTextPayload(tn);
-      if (!payload) continue;
-      const r = rectRelativeToFrame(tn, frame);
-      items.push({
-        kind: "text",
-        z: nextZ(tn.id),
-        id: tn.id,
-        x: r.x, y: r.y, w: r.w, h: r.h,
-        ...payload
-      });
-      hideForBg.push(tn);
+
+      if (node.type === "TEXT") {
+        const payload = ultraStableMode ? getUltraSafeTextPayload(node) : getDirectTextPayload(node);
+        if (!payload) continue;
+        const r = rectRelativeToFrame(node, frame);
+        items.push({
+          kind: "text",
+          z: nextZ(node.id),
+          id: node.id,
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          ...payload
+        });
+        hideForBg.push(node);
+        continue;
+      }
+
+      if (node.type === "RECTANGLE" && isSafeEditableRect(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const fill = getSolidFill(node);
+        const stroke = getSolidStroke(node);
+        const radius = getCornerRadiusAny(node);
+        if (fill || stroke) {
+          items.push({
+            kind: "shape",
+            z: nextZ(node.id),
+            id: node.id,
+            shape: "rect",
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            fill, stroke, radius,
+            opacity: typeof node.opacity === "number" ? node.opacity : 1
+          });
+          hideForBg.push(node);
+        }
+        continue;
+      }
+
+      if (node.type === "ELLIPSE" && isSafeEditableEllipse(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const fill = getSolidFill(node);
+        const stroke = getSolidStroke(node);
+        if (fill || stroke) {
+          items.push({
+            kind: "shape",
+            z: nextZ(node.id),
+            id: node.id,
+            shape: "ellipse",
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            fill, stroke, radius: 0,
+            opacity: typeof node.opacity === "number" ? node.opacity : 1
+          });
+          hideForBg.push(node);
+        }
+        continue;
+      }
+
+      if (node.type === "LINE" && isSafeEditableLine(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const stroke = getSolidStroke(node)!;
+        items.push({
+          kind: "shape",
+          z: nextZ(node.id),
+          id: node.id,
+          shape: "line",
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          stroke,
+          opacity: typeof node.opacity === "number" ? node.opacity : 1
+        });
+        hideForBg.push(node);
+      }
     }
 
     const prevVisible = new Map<string, boolean>();
-    for (const tn of hideForBg) {
-      prevVisible.set(tn.id, tn.visible);
-      tn.visible = false;
+    for (const n of hideForBg) {
+      prevVisible.set(n.id, n.visible);
+      n.visible = false;
     }
 
     let bgPngBase64: string | null = null;
@@ -1467,9 +1535,9 @@ async function exportOneFrameRemoteSafe(
       const bgPng = await frame.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: bgScale } });
       bgPngBase64 = pngToBase64(bgPng);
     } finally {
-      for (const tn of hideForBg) {
-        const v = prevVisible.get(tn.id);
-        if (typeof v === "boolean") tn.visible = v;
+      for (const n of hideForBg) {
+        const v = prevVisible.get(n.id);
+        if (typeof v === "boolean") n.visible = v;
       }
     }
 
@@ -1617,13 +1685,26 @@ async function exportFramesRemotelyDirect(
 
   for (let i = 0; i < frames.length; i++) {
     throwIfCancelled();
-
-    const slide = await exportOneFrameRemoteSafe(
-      frames[i],
-      i + 1,
-      frames.length,
-      adaptiveScale
-    );
+    const frame = frames[i];
+    let slide: ExportSlide;
+    try {
+      slide = await exportOneFrameRemoteSafe(
+        frame,
+        i + 1,
+        frames.length,
+        adaptiveScale
+      );
+    } catch (err: any) {
+      if (err?.__cancelled || err?.message === "CANCELLED") throw err;
+      postStatus(`Slide ${i + 1}/${frames.length} fallback to safe raster…`);
+      slide = await exportOneFrameRemoteRasterOnly(
+        frame,
+        i + 1,
+        frames.length,
+        adaptiveScale,
+        "Fallback raster render"
+      );
+    }
 
     throwIfCancelled();
     postStatus(`Mode: Railway backend. Uploading slide ${i + 1}/${frames.length}…`);
