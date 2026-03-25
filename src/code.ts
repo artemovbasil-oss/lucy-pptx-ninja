@@ -271,6 +271,66 @@ function getTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
   } catch { return null; }
 }
 
+function getDirectSolidFillHex(tn: TextNode): string | null {
+  try {
+    const fills = tn.fills;
+    if (!fills || fills === figma.mixed) return null;
+    const solid = (fills as readonly Paint[]).find((p) => p.type === "SOLID") as SolidPaint | undefined;
+    return solid ? rgbToHex(solid.color) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getDirectTextLineHeightPx(tn: TextNode, fontSizePx: number): number | null {
+  try {
+    const lh = tn.lineHeight;
+    if (!lh || lh === figma.mixed) return null;
+    if (lh.unit === "AUTO") return null;
+    if (lh.unit === "PIXELS") return typeof lh.value === "number" ? lh.value : null;
+    if (lh.unit === "PERCENT") return typeof lh.value === "number" ? (fontSizePx * lh.value) / 100 : null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getDirectTextPayload(tn: TextNode): Omit<ExportText, "kind" | "z" | "id" | "x" | "y" | "w" | "h"> | null {
+  try {
+    const text = tn.characters ?? "";
+    if (!text.length) return null;
+
+    const fontName = tn.fontName;
+    const fontSize = tn.fontSize;
+    const textCase = tn.textCase;
+    const align = tn.textAlignHorizontal;
+
+    if (!fontName || fontName === figma.mixed) return null;
+    if (typeof fontSize !== "number") return null;
+    if (!align || align === figma.mixed) return null;
+    if (textCase === figma.mixed) return null;
+
+    const color = getDirectSolidFillHex(tn);
+    if (!color) return null;
+
+    const style = (fontName.style || "").toLowerCase();
+    return {
+      text,
+      fontFamily: fontName.family || "Arial",
+      fontSize,
+      lineHeightPx: getDirectTextLineHeightPx(tn, fontSize),
+      color,
+      align: alignMap(align),
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: style.includes("bold") || style.includes("semibold") || style.includes("demibold") || style.includes("heavy") || style.includes("black"),
+      italic: style.includes("italic") || style.includes("oblique"),
+      uppercase: textCase === "UPPER"
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ---- helpers ----
 function isRotationZero(node: SceneNode): boolean {
   const rot = typeof (node as any).rotation === "number" ? (node as any).rotation : 0;
@@ -1158,24 +1218,18 @@ async function exportOneFrameRemoteSafe(
     throwIfCancelled();
 
     if (node.type === "TEXT") {
+      const payload = getDirectTextPayload(node);
+      if (!payload) {
+        await addRasterItemSafe(node, "safeText");
+        return;
+      }
       const r = rectRelativeToFrame(node, frame);
-      const flags = getFirstCharFontStyleFlags(node);
-      const fs = getFirstCharFontSize(node);
       items.push({
         kind: "text",
         z: nextZ(node.id),
         id: node.id,
         x: r.x, y: r.y, w: r.w, h: r.h,
-        text: node.characters ?? "",
-        fontFamily: getFirstCharFontFamily(node),
-        fontSize: fs,
-        lineHeightPx: getTextLineHeightPx(node, fs),
-        color: getFirstCharFillHex(node),
-        align: alignMap(node.textAlignHorizontal),
-        opacity: typeof node.opacity === "number" ? node.opacity : 1,
-        bold: flags.bold,
-        italic: flags.italic,
-        uppercase: getIsUppercase(node)
+        ...payload
       });
       return;
     }
