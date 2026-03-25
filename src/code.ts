@@ -54,10 +54,31 @@ function getExportScale(format: string, quality: string, remotePptx: boolean): n
 }
 
 async function fetchJson<T = any>(url: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers || {});
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const mergedHeaders: Record<string, string> = {};
+  const sourceHeaders: any = init?.headers;
 
-  const res = await fetch(url, { ...init, headers });
+  if (sourceHeaders) {
+    if (typeof sourceHeaders.forEach === "function") {
+      sourceHeaders.forEach((value: unknown, key: unknown) => {
+        mergedHeaders[String(key)] = String(value);
+      });
+    } else if (Array.isArray(sourceHeaders)) {
+      for (const entry of sourceHeaders) {
+        if (Array.isArray(entry) && entry.length >= 2) {
+          mergedHeaders[String(entry[0])] = String(entry[1]);
+        }
+      }
+    } else if (typeof sourceHeaders === "object") {
+      for (const [key, value] of Object.entries(sourceHeaders)) {
+        mergedHeaders[String(key)] = String(value);
+      }
+    }
+  }
+
+  const hasContentType = Object.keys(mergedHeaders).some((key) => key.toLowerCase() === "content-type");
+  if (!hasContentType) mergedHeaders["Content-Type"] = "application/json";
+
+  const res = await fetch(url, { ...init, headers: mergedHeaders });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(text || `Request failed: ${res.status}`);
