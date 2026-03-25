@@ -3,8 +3,8 @@ import PptxGenJS from "pptxgenjs";
 declare const __LUCY_API_BASE_URL__: string;
 
 // Keep these in sync with your release notes
-const UI_VERSION = "v0.8.1-hotfix";
-const UI_HIGHLIGHT = "build-marker-2026-03-25";
+const UI_VERSION = "v0.9";
+const UI_HIGHLIGHT = "no-modal export refactor";
 const DEFAULT_REMOTE_API_BASE = "https://lucy-pptx-ninja-production.up.railway.app";
 const REMOTE_API_BASE = ((typeof __LUCY_API_BASE_URL__ === "string" ? __LUCY_API_BASE_URL__ : "").trim() || DEFAULT_REMOTE_API_BASE).replace(/\/$/, "");
 
@@ -27,7 +27,7 @@ const qualitySelect = document.getElementById("qualitySelect") as HTMLDivElement
 const versionEl = document.getElementById("version") as HTMLDivElement | null;
 const tinyHintEl = document.getElementById("tinyHint") as HTMLDivElement | null;
 
-// Busy overlay elements
+// Legacy overlay nodes (no longer used)
 const busyOverlayEl = document.getElementById("busyOverlay") as HTMLDivElement | null;
 const overlayHintEl = document.getElementById("overlayHint") as HTMLDivElement | null;
 const overlayCancelBtn = document.getElementById("overlayCancel") as HTMLButtonElement | null;
@@ -184,7 +184,6 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 
   if (barEl) barEl.style.width = `${p}%`;
   if (pctEl) pctEl.textContent = "";
-  if (isBusy && overlayHintEl && phase) overlayHintEl.textContent = String(phase);
   if (progTextEl) progTextEl.textContent = label ? label : `${c}/${t}`;
   if (text) setStatus(text);
 }
@@ -192,21 +191,12 @@ function setProgress(phase: string, current: number, total: number, label?: stri
 let isBusy = false;
 let uiCancelRequested = false;
 
-function showBusyOverlay(show: boolean) {
-  if (!busyOverlayEl) return;
-  if (show) {
-    busyOverlayEl.classList.add("show");
-    busyOverlayEl.setAttribute("aria-hidden", "false");
-  } else {
+function setBusy(next: boolean, ctaLabel?: string) {
+  isBusy = next;
+  if (busyOverlayEl) {
     busyOverlayEl.classList.remove("show");
     busyOverlayEl.setAttribute("aria-hidden", "true");
   }
-}
-
-function setBusy(next: boolean, ctaLabel?: string) {
-  isBusy = next;
-  // show overlay only during export
-  showBusyOverlay(next);
 
   setState(next ? "processing" : "idle");
 
@@ -360,30 +350,34 @@ function renderList(frames: FrameInfo[]) {
   }
 }
 
+function startExport() {
+  if (isBusy) return;
+
+  const ids = getOrderedFrameIdsFromDOM();
+  if (!ids.length) {
+    setStatus("No frames selected.");
+    return;
+  }
+
+  uiCancelRequested = false;
+  setBusy(true, "Exporting…");
+  setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
+  const format = getSegmentedValue(formatSelect, "pptx");
+  setStatus(`${describeExportMode(format)}. Preparing export…`);
+
+  parent.postMessage({
+    pluginMessage: {
+      type: "EXPORT_PPTX_ORDERED",
+      frameIds: ids,
+      format,
+      quality: getSegmentedValue(qualitySelect, "best")
+    }
+  }, "*");
+}
+
 exportBtn.onclick = () => {
   try {
-    if (isBusy) return;
-
-    const ids = getOrderedFrameIdsFromDOM();
-    if (!ids.length) {
-      setStatus("No frames selected.");
-      return;
-    }
-
-    uiCancelRequested = false;
-    setBusy(true, "Exporting…");
-    setProgress("prepare", 0, 1, "Starting…", "Preparing export…");
-    const format = getSegmentedValue(formatSelect, "pptx");
-    setStatus(`${describeExportMode(format)}. Preparing export…`);
-
-    parent.postMessage({
-      pluginMessage: {
-        type: "EXPORT_PPTX_ORDERED",
-        frameIds: ids,
-        format,
-        quality: getSegmentedValue(qualitySelect, "best")
-      }
-    }, "*");
+    startExport();
   } catch (err) {
     showFatalUiError("Export click failed", err);
   }
@@ -396,13 +390,7 @@ cancelBtn?.addEventListener('click', () => {
   parent.postMessage({ pluginMessage: { type: "CANCEL_EXPORT" } }, "*");
 });
 
-// Overlay Cancel (only in overlay)
-overlayCancelBtn?.addEventListener('click', () => {
-  if (!isBusy) return;
-  uiCancelRequested = true;
-  setProgress('cancel', 0, 1, 'Cancelling…', 'Stopping export…');
-  parent.postMessage({ pluginMessage: { type: 'CANCEL_EXPORT' } }, '*');
-});
+overlayCancelBtn?.addEventListener("click", () => {});
 
 // Ask selection on open
 parent.postMessage({ pluginMessage: { type: "REQUEST_SELECTION" } }, "*");
