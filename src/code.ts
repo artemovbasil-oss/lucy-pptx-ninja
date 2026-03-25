@@ -1415,6 +1415,38 @@ async function exportOneFrameRemoteRasterOnly(
   };
 }
 
+function toRemoteSlidePayload(slide: ExportSlide): ExportSlide {
+  const remoteItems: ExportItem[] = slide.items.map((it) => {
+    if (it.kind === "raster") {
+      const bytes = (it as any).pngBytes as number[] | undefined;
+      if (Array.isArray(bytes)) {
+        const { pngBytes, ...rest } = it as any;
+        return { ...rest, pngBase64: pngToBase64(new Uint8Array(bytes)) } as ExportRasterRemote;
+      }
+    }
+    if (it.kind === "maskedImage") {
+      const bytes = (it as any).pngBytes as number[] | undefined;
+      if (Array.isArray(bytes)) {
+        const { pngBytes, ...rest } = it as any;
+        return { ...rest, pngBase64: pngToBase64(new Uint8Array(bytes)) } as ExportMaskedImageRemote;
+      }
+    }
+    return it;
+  });
+
+  const bgPngBase64 = Array.isArray(slide.bgPngBytes) && slide.bgPngBytes.length
+    ? pngToBase64(new Uint8Array(slide.bgPngBytes))
+    : null;
+
+  return {
+    ...slide,
+    bgPngBytes: [],
+    bgPngBase64,
+    fullPngBytes: null,
+    items: remoteItems
+  };
+}
+
 async function exportOneFrameRemoteSafe(
   frame: FrameNode,
   idx: number,
@@ -1844,12 +1876,15 @@ async function exportFramesRemotelyDirect(
     const frame = frames[i];
     let slide: ExportSlide;
     try {
-      slide = await exportOneFrameRemoteSafe(
+      const detailed = await exportOneFrame(
         frame,
         i + 1,
         frames.length,
-        adaptiveScale
+        adaptiveScale,
+        false,
+        false
       );
+      slide = toRemoteSlidePayload(detailed);
     } catch (err: any) {
       if (err?.__cancelled || err?.message === "CANCELLED") throw err;
       postStatus(`Slide ${i + 1}/${frames.length} fallback to safe raster…`);
