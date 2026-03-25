@@ -1448,6 +1448,37 @@ async function exportOneFrameRemoteSafe(
   if (flattenForStability) {
     const nodes = collectVisibleDescendantsSafe(frame);
     const hideForBg: SceneNode[] = [];
+    const maxFlattenRasterItems = total >= 20 ? 24 : 48;
+    let flattenRasterItems = 0;
+
+    async function addFlattenRasterNode(node: SceneNode): Promise<boolean> {
+      if (flattenRasterItems >= maxFlattenRasterItems) return false;
+      const r = rectRelativeToFrame(node, frame);
+      if (r.w <= 0 || r.h <= 0) return false;
+
+      const maxSide = Math.max(r.w, r.h);
+      const area = r.w * r.h;
+      if (maxSide > 5000 || area > 8_000_000) return false;
+
+      const nodeScale = maxSide >= 4000 ? Math.min(exportScale, 0.8) :
+        maxSide >= 2500 ? Math.min(exportScale, 0.95) :
+        Math.min(exportScale, 1.1);
+
+      postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, node.name || "Image");
+      const bytes = await rasterizeNodePNG(node, nodeScale);
+
+      items.push({
+        kind: "raster",
+        z: nextZ(node.id),
+        id: `flattenRaster__${node.id}`,
+        x: r.x, y: r.y, w: r.w, h: r.h,
+        pngBase64: pngToBase64(bytes)
+      });
+      hideForBg.push(node);
+      flattenRasterItems += 1;
+      return true;
+    }
+
     for (const node of nodes) {
       throwIfCancelled();
 
@@ -1518,6 +1549,17 @@ async function exportOneFrameRemoteSafe(
           opacity: typeof node.opacity === "number" ? node.opacity : 1
         });
         hideForBg.push(node);
+        continue;
+      }
+
+      // Keep direct child raster candidates as separate pictures where feasible.
+      if (node.parent?.id === frame.id && shouldRasterOverlay(node, frame)) {
+        try {
+          const extracted = await addFlattenRasterNode(node);
+          if (extracted) continue;
+        } catch {
+          // Keep this node in background if separate export failed.
+        }
       }
     }
 

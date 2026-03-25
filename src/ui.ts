@@ -652,6 +652,7 @@ async function buildPptxFromSlides(filename: string, slides: ExportSlide[]) {
           w: pxToIn(wPx),
           h: pxToIn(hPx),
           margin: 0,
+          fit: "shrink",
           inset: 0,
           fontFace,
           fontSize: Math.max(1, Math.round(pxToPt(effFsPx))),

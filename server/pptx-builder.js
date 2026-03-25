@@ -217,6 +217,7 @@ async function buildPptxBuffer(slides) {
           w: pxToIn(wPx),
           h: pxToIn(hPx),
           margin: 0,
+          fit: "shrink",
           align: it.align || "left",
           valign: "top",
           inset: 0,
