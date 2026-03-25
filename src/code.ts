@@ -1120,6 +1120,170 @@ async function exportFramesLocally(
   postProgress("export", frames.length, frames.length, "Sent to PPTX builder", "Building PPTX…");
 }
 
+async function exportOneFrameRemoteSafe(
+  frame: FrameNode,
+  idx: number,
+  total: number,
+  exportScale: number
+): Promise<ExportSlide> {
+  throwIfCancelled();
+  postProgress("export", idx - 1, total, `Scanning: ${frame.name}`, `Scanning frame ${idx}/${total}: ${frame.name}`);
+
+  const items: ExportItem[] = [];
+  let z = 0;
+
+  function nextZ(nodeId: string) {
+    z += 1;
+    return z;
+  }
+
+  function addTextItemSafe(tn: TextNode) {
+    const r = rectRelativeToFrame(tn, frame);
+    const flags = getFirstCharFontStyleFlags(tn);
+    const fs = getFirstCharFontSize(tn);
+    const itemZ = nextZ(tn.id);
+
+    items.push({
+      kind: "text",
+      z: itemZ,
+      id: tn.id,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      text: tn.characters ?? "",
+      fontFamily: getFirstCharFontFamily(tn),
+      fontSize: fs,
+      lineHeightPx: getTextLineHeightPx(tn, fs),
+      color: getFirstCharFillHex(tn),
+      align: alignMap(tn.textAlignHorizontal),
+      opacity: typeof tn.opacity === "number" ? tn.opacity : 1,
+      bold: flags.bold,
+      italic: flags.italic,
+      uppercase: getIsUppercase(tn)
+    });
+  }
+
+  async function addRasterItemSafe(node: SceneNode, idPrefix?: string) {
+    const r = rectRelativeToFrame(node, frame);
+    const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
+    if (isOverflowing || r.w <= 0 || r.h <= 0) return;
+
+    postProgress("export", idx - 1, total, `Rasterizing: ${frame.name}`, node.name);
+    const bytes = await rasterizeNodePNG(node, exportScale);
+    const itemZ = nextZ(node.id);
+    items.push({
+      kind: "raster",
+      z: itemZ,
+      id: idPrefix ? `${idPrefix}__${node.id}` : node.id,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      pngBytes: Array.from(bytes)
+    });
+  }
+
+  async function walkSafe(node: SceneNode, depth = 0) {
+    if (!("visible" in node) || (node as any).visible === false) return;
+    throwIfCancelled();
+
+    if (node.id !== frame.id) {
+      if (node.type === "TEXT") {
+        addTextItemSafe(node);
+        return;
+      }
+
+      if (node.type === "RECTANGLE" && isSafeEditableRect(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const fill = getSolidFill(node);
+        const stroke = getSolidStroke(node);
+        const radius = getCornerRadiusAny(node);
+        const isOverflowing = frame.clipsContent === true && isRectOutsideFrame(r, frame);
+        if (!isOverflowing && (fill || stroke)) {
+          items.push({
+            kind: "shape",
+            z: nextZ(node.id),
+            id: node.id,
+            shape: "rect",
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            fill, stroke, radius,
+            opacity: typeof node.opacity === "number" ? node.opacity : 1
+          });
+        }
+        return;
+      }
+
+      if (node.type === "ELLIPSE" && isSafeEditableEllipse(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const fill = getSolidFill(node);
+        const stroke = getSolidStroke(node);
+        if (fill || stroke) {
+          items.push({
+            kind: "shape",
+            z: nextZ(node.id),
+            id: node.id,
+            shape: "ellipse",
+            x: r.x, y: r.y, w: r.w, h: r.h,
+            fill, stroke, radius: 0,
+            opacity: typeof node.opacity === "number" ? node.opacity : 1
+          });
+        }
+        return;
+      }
+
+      if (node.type === "LINE" && isSafeEditableLine(node)) {
+        const r = rectRelativeToFrame(node, frame);
+        const stroke = getSolidStroke(node)!;
+        items.push({
+          kind: "shape",
+          z: nextZ(node.id),
+          id: node.id,
+          shape: "line",
+          x: r.x, y: r.y, w: r.w, h: r.h,
+          stroke,
+          opacity: typeof node.opacity === "number" ? node.opacity : 1
+        });
+        return;
+      }
+
+      const shouldRasterContainer =
+        (depth >= 1 && isContainer(node)) ||
+        shouldRasterizeConservativeContainer(node, frame) ||
+        (node.type === "FRAME" && depth >= 1 && !isNearFullFrame(node, frame));
+
+      if (shouldRasterContainer) {
+        await addRasterItemSafe(node, "safeContainer");
+        return;
+      }
+
+      if (shouldRasterOverlay(node, frame)) {
+        await addRasterItemSafe(node, "safeRaster");
+        return;
+      }
+    }
+
+    if ("children" in node) {
+      for (const ch of node.children as readonly SceneNode[]) {
+        await walkSafe(ch as SceneNode, depth + 1);
+      }
+    }
+  }
+
+  await walkSafe(frame, 0);
+
+  const smartBg = getSmartBackground(frame);
+  const bgShape = smartBg ?? { fill: "FFFFFF", opacity: 1 };
+
+  throwIfCancelled();
+  postProgress("export", idx, total, `Ready: ${frame.name}`);
+
+  return {
+    name: frame.name,
+    width: frame.width,
+    height: frame.height,
+    scale: exportScale,
+    bgPngBytes: [],
+    bgShape,
+    fullPngBytes: null,
+    items
+  };
+}
+
 async function exportFramesRemotelyDirect(
   frames: FrameNode[],
   exportScale: number,
@@ -1139,13 +1303,11 @@ async function exportFramesRemotelyDirect(
   for (let i = 0; i < frames.length; i++) {
     throwIfCancelled();
 
-    const slide = await exportOneFrame(
+    const slide = await exportOneFrameRemoteSafe(
       frames[i],
       i + 1,
       frames.length,
-      exportScale,
-      includeFullRaster,
-      true
+      exportScale
     );
 
     throwIfCancelled();
