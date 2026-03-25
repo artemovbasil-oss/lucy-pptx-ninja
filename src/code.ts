@@ -122,13 +122,12 @@ function getSelectedFrames(): FrameNode[] {
 }
 async function sendSelectionFrames() {
   const frames = getSelectedFrames();
-  const enriched = await Promise.all(frames.map(async (f) => {
-    try {
-      const bytes = await f.exportAsync({ format: "PNG", constraint: { type: "WIDTH", value: 96 } });
-      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: Array.from(bytes) };
-    } catch {
-      return { id: f.id, name: f.name, width: f.width, height: f.height, thumbBytes: null };
-    }
+  const enriched = frames.map((f) => ({
+    id: f.id,
+    name: f.name,
+    width: f.width,
+    height: f.height,
+    thumbBytes: null
   }));
   safeUiPostMessage({
     type: "SELECTION_FRAMES",
